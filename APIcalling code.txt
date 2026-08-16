@@ -1,0 +1,30 @@
+import requests
+
+# Public API endpoint
+url = "https://jsonplaceholder.typicode.com/posts"
+
+# Call the API
+response = requests.get(url)
+
+# Inspect JSON response
+data = response.json()
+
+# Print first 2 records for inspection
+print(data[:2])
+
+
+import pandas as pd
+
+# Convert JSON list to DataFrame
+df = pd.DataFrame(data)
+
+# Save to CSV
+df.to_csv("api_data.csv", index=False)
+
+print("CSV file created successfully!")
+
+
+# Example: Count posts per user
+post_count = df['userId'].value_counts()
+print(post_count)
+

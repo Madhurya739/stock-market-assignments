@@ -1,0 +1,5 @@
+# Initialize Git
+git init
+
+# Link to GitHub repo
+git remote set-url origin https://github.com/Madhurya739/stock-market-assignments
