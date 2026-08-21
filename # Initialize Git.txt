@@ -1,5 +1,10 @@
-# Initialize Git
-git init
+git pull
 
-# Link to GitHub repo
-git remote set-url origin https://github.com/Madhurya739/stock-market-assignments
+
+git add .
+
+
+git commit -m "Updated project folder with new changes"
+
+
+git push origin main
