@@ -1,0 +1,423 @@
+import pandas as pd
+
+def compute_cagr(start: float, end: float, years: int):
+    """
+    Compute CAGR with edge case handling.
+    Formula: ((end/start) ** (1/n) - 1) * 100
+    Returns (cagr_value, flag)
+    """
+    # Edge case: insufficient years
+    if years <= 0:
+        return None, "INSUFFICIENT"
+
+    # Edge case: zero base
+    if start == 0:
+        return None, "ZERO_BASE"
+
+    # Edge case: both negative
+    if start < 0 and end < 0:
+        return None, "BOTH_NEGATIVE"
+
+    # Edge case: decline to loss
+    if start > 0 and end < 0:
+        return None, "DECLINE_TO_LOSS"
+
+    # Edge case: turnaround
+    if start < 0 and end > 0:
+        return None, "TURNAROUND"
+
+    # Normal case
+    try:
+        cagr = ((end / start) ** (1 / years) - 1) * 100
+        return cagr, None
+    except Exception:
+        return None, "ERROR"
+
+
+def compute_metric_cagr(df: pd.DataFrame, metric: str, years_list=[3, 5, 10]):
+    """
+    Compute CAGR for a given metric across multiple horizons.
+    df must have columns: ['year', metric]
+    Returns DataFrame with CAGR values and flags.
+    """
+    df = df.sort_values("year").reset_index(drop=True)
+    results = {}
+
+    for n in years_list:
+        if len(df) < n + 1:
+            results[f"{metric}_cagr_{n}yr"] = None
+            results[f"{metric}_cagr_{n}yr_flag"] = "INSUFFICIENT"
+            continue
+
+        start = df.iloc[-(n+1)][metric]
+        end = df.iloc[-1][metric]
+
+        cagr, flag = compute_cagr(start, end, n)
+        results[f"{metric}_cagr_{n}yr"] = cagr
+        results[f"{metric}_cagr_{n}yr_flag"] = flag
+
+    return pd.DataFrame([results])
+
+
+import pytest
+import pandas as pd
+from src.analytics.cagr import compute_cagr, compute_metric_cagr
+
+def test_normal_cagr():
+    val, flag = compute_cagr(100, 200, 3)
+    assert round(val, 2) == 25.99
+    assert flag is None
+
+def test_turnaround_flag():
+    val, flag = compute_cagr(-100, 200, 3)
+    assert val is None
+    assert flag == "TURNAROUND"
+
+def test_decline_to_loss_flag():
+    val, flag = compute_cagr(100, -50, 3)
+    assert val is None
+    assert flag == "DECLINE_TO_LOSS"
+
+def test_both_negative_flag():
+    val, flag = compute_cagr(-100, -200, 3)
+    assert val is None
+    assert flag == "BOTH_NEGATIVE"
+
+def test_zero_base_flag():
+    val, flag = compute_cagr(0, 200, 3)
+    assert val is None
+    assert flag == "ZERO_BASE"
+
+def test_insufficient_years_flag():
+    val, flag = compute_cagr(100, 200, 0)
+    assert val is None
+    assert flag == "INSUFFICIENT"
+
+def test_metric_cagr_normal():
+    df = pd.DataFrame({"year":[2018,2019,2020,2021],
+                       "revenue":[100,120,150,200]})
+    result = compute_metric_cagr(df, "revenue", [3])
+    assert result["revenue_cagr_3yr"].iloc[0] is not None
+    assert result["revenue_cagr_3yr_flag"].iloc[0] is None
+
+def test_metric_cagr_insufficient():
+    df = pd.DataFrame({"year":[2020,2021],
+                       "eps":[5,6]})
+    result = compute_metric_cagr(df, "eps", [3])
+    assert result["eps_cagr_3yr"].iloc[0] is None
+    assert result["eps_cagr_3yr_flag"].iloc[0] == "INSUFFICIENT"
+
+def test_metric_cagr_decline_to_loss():
+    df = pd.DataFrame({"year":[2018,2019,2020,2021],
+                       "pat":[100,80,50,-20]})
+    result = compute_metric_cagr(df, "pat", [3])
+    assert result["pat_cagr_3yr"].iloc[0] is None
+    assert result["pat_cagr_3yr_flag"].iloc[0] == "DECLINE_TO_LOSS"
+
+def test_metric_cagr_turnaround():
+    df = pd.DataFrame({"year":[2018,2019,2020,2021],
+                       "pat":[-100,-50,0,200]})
+    result = compute_metric_cagr(df, "pat", [3])
+    assert result["pat_cagr_3yr"].iloc[0] is None
+    assert result["pat_cagr_3yr_flag"].iloc[0] == "TURNAROUND"
+
+
+df = pd.DataFrame({"year":[2018,2019,2020,2021],
+                   "revenue":[100,120,150,200]})
+result = compute_metric_cagr(df, "revenue", [3])
+
+
+# tests/test_cagr.py
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.analytics.cagr import compute_cagr, compute_metric_cagr
+
+
+import pandas as pd
+import numpy as np
+
+def free_cash_flow(df: pd.DataFrame):
+    """
+    Free Cash Flow = operating_activity + investing_activity
+    Negative values allowed.
+    """
+    df["fcf"] = df["operating_activity"] + df["investing_activity"]
+    return df
+
+
+def cfo_quality_score(df: pd.DataFrame):
+    """
+    CFO Quality Score = (CFO / PAT) averaged over 5 years.
+    Classification:
+      >1.0 = High Quality
+      0.5–1.0 = Moderate
+      <0.5 = Accrual Risk
+    Return None if PAT = 0.
+    """
+    ratios = []
+    for _, row in df.tail(5).iterrows():
+        if row["pat"] == 0:
+            ratios.append(np.nan)
+        else:
+            ratios.append(row["operating_activity"] / row["pat"])
+    avg_ratio = np.nanmean(ratios)
+
+    if np.isnan(avg_ratio):
+        return None, None
+    if avg_ratio > 1.0:
+        return avg_ratio, "High Quality"
+    elif avg_ratio >= 0.5:
+        return avg_ratio, "Moderate"
+    else:
+        return avg_ratio, "Accrual Risk"
+
+
+def capex_intensity(df: pd.DataFrame):
+    """
+    CapEx Intensity = abs(investing_activity) / sales * 100
+    Classification:
+      <3% = Asset Light
+      3–8% = Moderate
+      >8% = Capital Intensive
+    """
+    df["capex_intensity"] = abs(df["investing_activity"]) / df["sales"] * 100
+    df["capex_class"] = pd.cut(
+        df["capex_intensity"],
+        bins=[-np.inf, 3, 8, np.inf],
+        labels=["Asset Light", "Moderate", "Capital Intensive"]
+    )
+    return df
+
+
+def fcf_conversion_rate(df: pd.DataFrame):
+    """
+    FCF Conversion Rate = FCF / operating_profit * 100
+    Return None if operating_profit = 0.
+    """
+    def calc(row):
+        if row["operating_profit"] == 0:
+            return None
+        return (row["fcf"] / row["operating_profit"]) * 100
+
+    df["fcf_conversion_rate"] = df.apply(calc, axis=1)
+    return df
+
+
+def classify_capital_allocation(df: pd.DataFrame):
+    """
+    Capital Allocation 8-pattern classifier based on sign of (CFO, CFI, CFF).
+    Pattern labels:
+      (+,-,-) = Reinvestor
+      (+,-,-) with high CFO/PAT = Shareholder Returns
+      (+,+,-) = Liquidating Assets
+      (-,+,+) = Distress Signal
+      (-,-,+) = Growth Funded by Debt
+      (+,+,+) = Cash Accumulator
+      (-,-,-) = Pre-Revenue
+      (+,-,+) = Mixed
+    """
+    patterns = []
+    for _, row in df.iterrows():
+        cfo_sign = "+" if row["operating_activity"] > 0 else "-"
+        cfi_sign = "+" if row["investing_activity"] > 0 else "-"
+        cff_sign = "+" if row["financing_activity"] > 0 else "-"
+
+        label = None
+        if (cfo_sign, cfi_sign, cff_sign) == ("+", "-", "-"):
+            # Check CFO/PAT quality
+            if row["pat"] != 0 and (row["operating_activity"] / row["pat"]) > 1.2:
+                label = "Shareholder Returns"
+            else:
+                label = "Reinvestor"
+        elif (cfo_sign, cfi_sign, cff_sign) == ("+", "+", "-"):
+            label = "Liquidating Assets"
+        elif (cfo_sign, cfi_sign, cff_sign) == ("-", "+", "+"):
+            label = "Distress Signal"
+        elif (cfo_sign, cfi_sign, cff_sign) == ("-", "-", "+"):
+            label = "Growth Funded by Debt"
+        elif (cfo_sign, cfi_sign, cff_sign) == ("+", "+", "+"):
+            label = "Cash Accumulator"
+        elif (cfo_sign, cfi_sign, cff_sign) == ("-", "-", "-"):
+            label = "Pre-Revenue"
+        elif (cfo_sign, cfi_sign, cff_sign) == ("+", "-", "+"):
+            label = "Mixed"
+
+        patterns.append({
+            "company_id": row["company_id"],
+            "year": row["year"],
+            "cfo_sign": cfo_sign,
+            "cfi_sign": cfi_sign,
+            "cff_sign": cff_sign,
+            "pattern_label": label
+        })
+
+    return pd.DataFrame(patterns)
+
+
+def export_capital_allocation(df: pd.DataFrame, path="output/capital_allocation.csv"):
+    """
+    Export capital allocation classification to CSV.
+    """
+    classified = classify_capital_allocation(df)
+    classified.to_csv(path, index=False)
+    return classified
+
+df = pd.DataFrame({
+    "company_id": [1,1,1,1,1],
+    "year": [2017,2018,2019,2020,2021],
+    "operating_activity": [100,120,150,180,200],
+    "investing_activity": [-50,-60,-70,-80,-90],
+    "financing_activity": [-20,-10,-30,-40,-50],
+    "pat": [80,90,100,110,120],
+    "sales": [500,550,600,650,700],
+    "operating_profit": [90,100,110,120,130]
+})
+
+df = free_cash_flow(df)
+df = capex_intensity(df)
+df = fcf_conversion_rate(df)
+
+score, quality = cfo_quality_score(df)
+print("CFO Quality Score:", score, quality)
+
+classified = export_capital_allocation(df)
+print(classified)
+
+
+
+import os
+
+def export_capital_allocation(df: pd.DataFrame, path="output/capital_allocation.csv"):
+    """
+    Export capital allocation classification to CSV.
+    """
+    classified = classify_capital_allocation(df)
+
+    # Ensure parent directory exists
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    classified.to_csv(path, index=False)
+    return classified
+
+classified = export_capital_allocation(df)
+print(classified)
+
+o/p
+
+ company_id  year cfo_sign cfi_sign cff_sign        pattern_label
+0           1  2017        +        -        -  Shareholder Returns
+1           1  2018        +        -        -  Shareholder Returns
+2           1  2019        +        -        -  Shareholder Returns
+3           1  2020        +        -        -  Shareholder Returns
+4           1  2021        +        -        -  Shareholder Returns
+
+def add_leverage_flag(df: pd.DataFrame):
+    def flag(row):
+        # Suppress warning for Financials
+        if row["broad_sector"] == "Financials":
+            return False
+        # Compute D/E ratio
+        de_ratio = row["borrowings"] / (row["equity_capital"] + row["reserves"])
+        return de_ratio > 5
+
+    df["high_leverage_flag"] = df.apply(flag, axis=1)
+    return df
+
+
+df = pd.DataFrame({
+    "company_id": [1,2],
+    "year": [2025,2025],
+    "broad_sector": ["Financials","Manufacturing"],
+    "borrowings": [1000,500],
+    "equity_capital": [100,200],
+    "reserves": [50,100]
+})
+
+df = add_leverage_flag(df)
+print(df[["company_id","broad_sector","high_leverage_flag"]])
+
+o/p
+company_id   broad_sector  high_leverage_flag
+0           1     Financials               False
+1           2  Manufacturing               False
+
+
+import os
+import logging
+import pandas as pd
+
+# Configure logging once
+os.makedirs("output", exist_ok=True)
+logging.basicConfig(filename="output/ratio_edge_cases.log", level=logging.INFO)
+
+def process_ratios(df: pd.DataFrame):
+    """
+    Pipeline:
+    1. Suppress D/E warning for Financials sector
+    2. Compute ROCE and cross-check vs source
+    3. Compute ROE and cross-check vs source
+    4. Log anomalies with category tags
+    """
+
+    def leverage_flag(row):
+        if row["broad_sector"] == "Financials":
+            return False
+        de_ratio = row["borrowings"] / (row["equity_capital"] + row["reserves"])
+        return de_ratio > 5
+
+    df["high_leverage_flag"] = df.apply(leverage_flag, axis=1)
+
+    for _, row in df.iterrows():
+        # --- ROCE check ---
+        computed_roce = (row["ebit"] /
+                         (row["equity_capital"] + row["reserves"] + row["borrowings"])) * 100
+        source_roce = row["roce_percentage"]
+
+        if abs(computed_roce - source_roce) > 5:
+            logging.info(
+                f"{row['company_id']} {row['year']} ROCE anomaly: "
+                f"computed={computed_roce:.2f}, source={source_roce:.2f} | Category=Formula Discrepancy"
+            )
+
+        # --- ROE check ---
+        computed_roe = (row["net_profit"] /
+                        (row["equity_capital"] + row["reserves"])) * 100
+        source_roe = row["roe_percentage"]
+
+        if abs(computed_roe - source_roe) > 5:
+            # Example categorisation: source issue
+            logging.info(
+                f"{row['company_id']} {row['year']} ROE anomaly: "
+                f"computed={computed_roe:.2f}, source={source_roe:.2f} | Category=Data Source Issue"
+            )
+
+        # Store computed values for analytics
+        df.loc[row.name, "computed_roce"] = computed_roce
+        df.loc[row.name, "computed_roe"] = computed_roe
+
+    return df
+
+df = pd.DataFrame({
+    "company_id": [1,2],
+    "year": [2025,2025],
+    "broad_sector": ["Financials","Manufacturing"],
+    "borrowings": [1000,500],
+    "equity_capital": [100,200],
+    "reserves": [50,100],
+    "ebit": [300,250],
+    "net_profit": [200,150],
+    "roce_percentage": [20,40],   # source values
+    "roe_percentage": [0.52,30]   # source values
+})
+
+df = process_ratios(df)
+print(df[["company_id","broad_sector","high_leverage_flag","computed_roce","computed_roe"]])
+
+o/p
+company_id   broad_sector  high_leverage_flag  computed_roce  computed_roe
+0           1     Financials               False      26.086957    133.333333
+1           2  Manufacturing               False      31.250000     50.000000
+
+
+

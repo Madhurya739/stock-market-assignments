@@ -1,0 +1,4 @@
+INFO:root:1 2025 ROCE anomaly: computed=26.09, source=20.00 | Category=Formula Discrepancy
+INFO:root:1 2025 ROE anomaly: computed=133.33, source=0.52 | Category=Data Source Issue
+INFO:root:2 2025 ROCE anomaly: computed=31.25, source=40.00 | Category=Formula Discrepancy
+INFO:root:2 2025 ROE anomaly: computed=50.00, source=30.00 | Category=Data Source Issue

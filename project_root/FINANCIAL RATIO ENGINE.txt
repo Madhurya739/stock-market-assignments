@@ -1,0 +1,290 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+def net_profit_margin(net_profit: float, sales: float) -> float | None:
+    """Net Profit Margin = (Net Profit / Sales) * 100"""
+    if sales == 0:
+        return None
+    return (net_profit / sales) * 100
+
+
+def operating_profit_margin(operating_profit: float, sales: float, opm_percentage: float | None = None) -> float | None:
+    """Operating Profit Margin = (Operating Profit / Sales) * 100
+       Cross-check against provided opm_percentage, log if mismatch > 1%
+    """
+    if sales == 0:
+        return None
+    opm = (operating_profit / sales) * 100
+    if opm_percentage is not None and abs(opm - opm_percentage) > 1:
+        logger.warning(
+            "OPM mismatch: computed=%.2f, provided=%.2f", opm, opm_percentage
+        )
+    return opm
+
+
+def return_on_equity(net_profit: float, equity_capital: float, reserves: float) -> float | None:
+    """ROE = (Net Profit / (Equity + Reserves)) * 100"""
+    base = equity_capital + reserves
+    if base <= 0:
+        return None
+    return (net_profit / base) * 100
+
+
+def return_on_capital_employed(ebit: float, equity: float, reserves: float, borrowings: float, broad_sector: str | None = None) -> float | None:
+    """ROCE = (EBIT / (Equity + Reserves + Borrowings)) * 100
+       For Financials sector, use sector-relative benchmark (handled externally).
+    """
+    base = equity + reserves + borrowings
+    if base == 0:
+        return None
+    roce = (ebit / base) * 100
+    if broad_sector == "Financials":
+        logger.info("ROCE computed for Financials sector — compare with sector benchmark.")
+    return roce
+
+
+def return_on_assets(net_profit: float, total_assets: float) -> float | None:
+    """ROA = (Net Profit / Total Assets) * 100"""
+    if total_assets == 0:
+        return None
+    return (net_profit / total_assets) * 100
+
+import pytest
+from src.analytics import ratios
+
+def test_net_profit_margin_normal():
+    assert ratios.net_profit_margin(50, 200) == 25.0
+
+def test_net_profit_margin_zero_sales():
+    assert ratios.net_profit_margin(50, 0) is None
+
+def test_operating_profit_margin_normal():
+    assert ratios.operating_profit_margin(40, 200) == 20.0
+
+def test_operating_profit_margin_mismatch_logs(caplog):
+    with caplog.at_level("WARNING"):
+        ratios.operating_profit_margin(40, 200, opm_percentage=25)
+    assert "OPM mismatch" in caplog.text
+
+def test_return_on_equity_normal():
+    assert ratios.return_on_equity(100, 300, 200) == pytest.approx(20.0)
+
+def test_return_on_equity_negative_equity():
+    assert ratios.return_on_equity(100, -300, -200) is None
+
+def test_return_on_capital_employed_normal():
+    assert ratios.return_on_capital_employed(150, 300, 200, 500) == pytest.approx(15.0)
+
+def test_return_on_assets_zero_assets():
+    assert ratios.return_on_assets(100, 0) is None
+
+
+cd C:\Users\srisa\Desktop\Week_2 Stock Market\project_root
+
+
+from src.analytics import ratios
+
+import sys, os
+sys.path.append(os.path.abspath("C:/Users/srisa/Desktop/Week_2 Stock Market/project_root"))
+
+from src.analytics import ratios
+
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+def debt_to_equity(borrowings: float, equity_capital: float, reserves: float, broad_sector: str | None = None) -> tuple[float, bool]:
+    """Debt-to-Equity = Borrowings / (Equity + Reserves)
+       Returns 0 if borrowings = 0.
+       Adds high_leverage_flag if D/E > 5 and sector != Financials.
+    """
+    base = equity_capital + reserves
+    if base <= 0:
+        return None, False
+    if borrowings == 0:
+        return 0.0, False
+    de_ratio = borrowings / base
+    high_leverage_flag = de_ratio > 5 and broad_sector != "Financials"
+    return de_ratio, high_leverage_flag
+
+
+def interest_coverage_ratio(operating_profit: float, other_income: float, interest: float) -> tuple[float | None, str | None, bool]:
+    """ICR = (Operating Profit + Other Income) / Interest
+       Returns None if interest = 0 (debt-free).
+       Adds icr_label = 'Debt Free' if interest = 0.
+       Adds warning flag if ICR < 1.5.
+    """
+    if interest == 0:
+        return None, "Debt Free", False
+    icr = (operating_profit + other_income) / interest
+    warning_flag = icr < 1.5
+    return icr, None, warning_flag
+
+
+def net_debt(borrowings: float, investments: float) -> float:
+    """Net Debt = Borrowings - Investments"""
+    return borrowings - investments
+
+
+def asset_turnover(sales: float, total_assets: float) -> float | None:
+    """Asset Turnover = Sales / Total Assets"""
+    if total_assets == 0:
+        return None
+    return sales / total_assets
+
+
+import pytest
+from src.analytics import ratios
+
+def test_debt_to_equity_debt_free():
+    de, flag = ratios.debt_to_equity(0, 200, 100)
+    assert de == 0.0
+    assert flag is False
+
+def test_debt_to_equity_high_leverage_flag():
+    de, flag = ratios.debt_to_equity(2000, 100, 200, broad_sector="Manufacturing")
+    assert de > 5
+    assert flag is True
+
+def test_debt_to_equity_financials_no_flag():
+    de, flag = ratios.debt_to_equity(2000, 100, 200, broad_sector="Financials")
+    assert de > 5
+    assert flag is False
+
+def test_interest_coverage_ratio_normal():
+    icr, label, flag = ratios.interest_coverage_ratio(300, 50, 100)
+    assert icr == pytest.approx(3.5)
+    assert label is None
+    assert flag is False
+
+def test_interest_coverage_ratio_interest_zero():
+    icr, label, flag = ratios.interest_coverage_ratio(300, 50, 0)
+    assert icr is None
+    assert label == "Debt Free"
+    assert flag is False
+
+def test_interest_coverage_ratio_warning_flag():
+    icr, label, flag = ratios.interest_coverage_ratio(100, 0, 100)
+    assert icr == pytest.approx(1.0)
+    assert flag is True
+
+def test_net_debt():
+    assert ratios.net_debt(500, 200) == 300
+
+def test_asset_turnover_zero_assets():
+    assert ratios.asset_turnover(1000, 0) is None
+
+
+from src.analytics import ratios
+
+print(ratios.debt_to_equity(0, 200, 100))  
+# → (0.0, False)
+
+print(ratios.debt_to_equity(2000, 100, 200, broad_sector="Manufacturing"))  
+# → (6.67..., True)
+
+print(ratios.interest_coverage_ratio(300, 50, 100))  
+# → (3.5, None, False)
+
+print(ratios.interest_coverage_ratio(300, 50, 0))  
+# → (None, 'Debt Free', False)
+
+print(ratios.net_debt(500, 200))  
+# → 300
+
+print(ratios.asset_turnover(1000, 500))  
+# → 2.0
+
+
+from src.analytics import ratios
+
+print(ratios.debt_to_equity(0, 200, 100))  
+# → (0.0, False)
+
+print(ratios.debt_to_equity(2000, 100, 200, broad_sector="Manufacturing"))  
+# → (6.67..., True)
+
+print(ratios.interest_coverage_ratio(300, 50, 100))  
+# → (3.5, None, False)
+
+print(ratios.interest_coverage_ratio(300, 50, 0))  
+# → (None, 'Debt Free', False)
+
+print(ratios.net_debt(500, 200))  
+# → 300
+
+print(ratios.asset_turnover(1000, 500))  
+# → 2.0
+
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+# ---------------- Profitability Ratios ----------------
+
+def net_profit_margin(net_profit: float, sales: float) -> float | None:
+    if sales == 0:
+        return None
+    return (net_profit / sales) * 100
+
+def operating_profit_margin(operating_profit: float, sales: float, opm_percentage: float | None = None) -> float | None:
+    if sales == 0:
+        return None
+    opm = (operating_profit / sales) * 100
+    if opm_percentage is not None and abs(opm - opm_percentage) > 1:
+        logger.warning("OPM mismatch: computed=%.2f, provided=%.2f", opm, opm_percentage)
+    return opm
+
+def return_on_equity(net_profit: float, equity_capital: float, reserves: float) -> float | None:
+    base = equity_capital + reserves
+    if base <= 0:
+        return None
+    return (net_profit / base) * 100
+
+def return_on_capital_employed(ebit: float, equity: float, reserves: float, borrowings: float, broad_sector: str | None = None) -> float | None:
+    base = equity + reserves + borrowings
+    if base == 0:
+        return None
+    roce = (ebit / base) * 100
+    if broad_sector == "Financials":
+        logger.info("ROCE computed for Financials sector — compare with sector benchmark.")
+    return roce
+
+def return_on_assets(net_profit: float, total_assets: float) -> float | None:
+    if total_assets == 0:
+        return None
+    return (net_profit / total_assets) * 100
+
+# ---------------- Leverage & Efficiency Ratios ----------------
+
+def debt_to_equity(borrowings: float, equity_capital: float, reserves: float, broad_sector: str | None = None) -> tuple[float, bool]:
+    base = equity_capital + reserves
+    if base <= 0:
+        return None, False
+    if borrowings == 0:
+        return 0.0, False
+    de_ratio = borrowings / base
+    high_leverage_flag = de_ratio > 5 and broad_sector != "Financials"
+    return de_ratio, high_leverage_flag
+
+def interest_coverage_ratio(operating_profit: float, other_income: float, interest: float) -> tuple[float | None, str | None, bool]:
+    if interest == 0:
+        return None, "Debt Free", False
+    icr = (operating_profit + other_income) / interest
+    warning_flag = icr < 1.5
+    return icr, None, warning_flag
+
+def net_debt(borrowings: float, investments: float) -> float:
+    return borrowings - investments
+
+def asset_turnover(sales: float, total_assets: float) -> float | None:
+    if total_assets == 0:
+        return None
+    return sales / total_assets
+
+
+from src.analytics import ratios
+print(dir(ratios))
