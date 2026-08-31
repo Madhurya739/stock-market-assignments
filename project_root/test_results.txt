@@ -1,0 +1,35 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.6, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\srisa\anaconda3\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\srisa\Desktop\Week_2 Stock Market\project_root
+plugins: anyio-4.12.1
+collecting ... collected 26 items
+
+tests/test_cagr.py::test_normal_cagr PASSED                              [  3%]
+tests/test_cagr.py::test_turnaround_flag PASSED                          [  7%]
+tests/test_cagr.py::test_decline_to_loss_flag PASSED                     [ 11%]
+tests/test_cagr.py::test_both_negative_flag PASSED                       [ 15%]
+tests/test_cagr.py::test_zero_base_flag PASSED                           [ 19%]
+tests/test_cagr.py::test_insufficient_years_flag PASSED                  [ 23%]
+tests/test_cagr.py::test_metric_cagr_normal PASSED                       [ 26%]
+tests/test_cagr.py::test_metric_cagr_insufficient PASSED                 [ 30%]
+tests/test_cagr.py::test_metric_cagr_decline_to_loss PASSED              [ 34%]
+tests/test_cagr.py::test_metric_cagr_turnaround PASSED                   [ 38%]
+tests/test_leverage_efficiency.py::test_debt_to_equity_debt_free PASSED  [ 42%]
+tests/test_leverage_efficiency.py::test_debt_to_equity_high_leverage_flag PASSED [ 46%]
+tests/test_leverage_efficiency.py::test_debt_to_equity_financials_no_flag PASSED [ 50%]
+tests/test_leverage_efficiency.py::test_interest_coverage_ratio_normal PASSED [ 53%]
+tests/test_leverage_efficiency.py::test_interest_coverage_ratio_interest_zero PASSED [ 57%]
+tests/test_leverage_efficiency.py::test_interest_coverage_ratio_warning_flag PASSED [ 61%]
+tests/test_leverage_efficiency.py::test_net_debt PASSED                  [ 65%]
+tests/test_leverage_efficiency.py::test_asset_turnover_zero_assets PASSED [ 69%]
+tests/test_ratios.py::test_net_profit_margin_normal PASSED               [ 73%]
+tests/test_ratios.py::test_net_profit_margin_zero_sales PASSED           [ 76%]
+tests/test_ratios.py::test_operating_profit_margin_normal PASSED         [ 80%]
+tests/test_ratios.py::test_operating_profit_margin_mismatch_logs PASSED  [ 84%]
+tests/test_ratios.py::test_return_on_equity_normal PASSED                [ 88%]
+tests/test_ratios.py::test_return_on_equity_negative_equity PASSED       [ 92%]
+tests/test_ratios.py::test_return_on_capital_employed_normal PASSED      [ 96%]
+tests/test_ratios.py::test_return_on_assets_zero_assets PASSED           [100%]
+
+============================= 26 passed in 1.00s ==============================

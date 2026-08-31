@@ -1,0 +1,3453 @@
+import yaml
+import pandas as pd
+import numpy as np
+
+def load_config(config_path="screener_config.yaml"):
+    """Load screener thresholds from YAML config file."""
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+def apply_filters(financial_ratios: pd.DataFrame, config_path="screener_config.yaml"):
+    """
+    Apply screener filters to financial_ratios DataFrame.
+    Supports 15 metrics with special handling for D/E and ICR.
+    Returns sorted DataFrame with composite_quality_score.
+    """
+    config = load_config(config_path)
+    df = financial_ratios.copy()
+
+    # --- Define filters ---
+    filters = {
+        "roe": ("min", "ROE min"),
+        "de_ratio": ("max", "D/E max"),
+        "fcf": ("min", "FCF min"),
+        "revenue_cagr_5yr": ("min", "Revenue CAGR 5yr min"),
+        "pat_cagr_5yr": ("min", "PAT CAGR 5yr min"),
+        "opm": ("min", "OPM min"),
+        "pe": ("max", "P/E max"),
+        "pb": ("max", "P/B max"),
+        "dividend_yield": ("min", "Dividend Yield min"),
+        "icr": ("min", "ICR min"),
+        "market_cap": ("min", "Market Cap min"),
+        "net_profit": ("min", "Net Profit min"),
+        "eps_cagr": ("min", "EPS CAGR min"),
+        "asset_turnover": ("min", "Asset Turnover min"),
+        "sales": ("min", "Sales min"),
+    }
+
+    mask = pd.Series(True, index=df.index)
+
+    # --- Apply filters ---
+    for col, (mode, key) in filters.items():
+        if key not in config:
+            continue
+        threshold = config[key]
+
+        if col == "de_ratio":
+            # Skip Financials sector for D/E filter
+            sector_mask = df["broad_sector"] != "Financials"
+            mask &= (df[col] <= threshold) | ~sector_mask
+
+        elif col == "icr":
+            # Treat Debt Free label as infinity
+            icr_values = df[col].replace("Debt Free", np.inf)
+            mask &= icr_values.astype(float) >= threshold
+
+        else:
+            if mode == "min":
+                mask &= df[col] >= threshold
+            elif mode == "max":
+                mask &= df[col] <= threshold
+
+    df = df[mask].copy()
+
+    # --- Composite Quality Score ---
+    score_components = []
+    for col, (mode, _) in filters.items():
+        if col in df.columns and df[col].dtype != object:
+            if mode == "min":
+                norm = (df[col] - df[col].min()) / (df[col].max() - df[col].min() + 1e-9)
+            else:  # max filter → inverse normalization
+                norm = (df[col].max() - df[col]) / (df[col].max() - df[col].min() + 1e-9)
+            score_components.append(norm)
+
+    if score_components:
+        df["composite_quality_score"] = pd.concat(score_components, axis=1).mean(axis=1)
+    else:
+        df["composite_quality_score"] = 0
+
+    # --- Sort by composite score ---
+    df = df.sort_values(by="composite_quality_score", ascending=False)
+
+    return df
+
+
+from src.screener.engine import apply_filters
+
+import pandas as pd
+from src.screener.engine import apply_filters
+
+# Example DataFrame
+financial_ratios = pd.DataFrame({
+    "company_id": [1, 2, 3],
+    "broad_sector": ["Manufacturing", "Financials", "IT"],
+    "roe": [15, 12, 20],
+    "de_ratio": [2.5, 10.0, 1.2],
+    "fcf": [100, -50, 200],
+    "revenue_cagr_5yr": [12, 8, 15],
+    "pat_cagr_5yr": [10, 5, 18],
+    "opm": [20, 15, 25],
+    "pe": [18, 25, 12],
+    "pb": [2.0, 3.5, 1.8],
+    "dividend_yield": [1.5, 0.8, 2.0],
+    "icr": [3.0, "Debt Free", 5.0],
+    "market_cap": [5000, 2000, 8000],
+    "net_profit": [300, 150, 400],
+    "eps_cagr": [12, 6, 20],
+    "asset_turnover": [1.2, 0.8, 1.5],
+    "sales": [10000, 5000, 15000],
+})
+
+result = apply_filters(financial_ratios, "screener_config.yaml")
+print(result[["company_id", "composite_quality_score"]])
+
+o/p
+company_id  composite_quality_score
+2           3                      0.0
+
+import pandas as pd
+import numpy as np
+
+def apply_preset(financial_ratios: pd.DataFrame, preset: str):
+    """
+    Apply one of the 6 preset screeners to the financial_ratios DataFrame.
+    Returns filtered DataFrame with composite_quality_score.
+    """
+    df = financial_ratios.copy()
+
+    # --- Define preset rules ---
+    presets = {
+        "Quality Compounder": {
+            "roe": lambda x: x > 15,
+            "de_ratio": lambda x: x < 1.0,
+            "fcf": lambda x: x > 0,
+            "revenue_cagr_5yr": lambda x: x > 10,
+        },
+        "Value Pick": {
+            "pe": lambda x: x < 20,
+            "pb": lambda x: x < 3.0,
+            "de_ratio": lambda x: x < 2.0,
+            "dividend_yield": lambda x: x > 1,
+        },
+        "Growth Accelerator": {
+            "pat_cagr_5yr": lambda x: x > 20,
+            "revenue_cagr_5yr": lambda x: x > 15,
+            "de_ratio": lambda x: x < 2.0,
+        },
+        "Dividend Champion": {
+            "dividend_yield": lambda x: x > 2,
+            "dividend_payout": lambda x: x < 80,
+            "fcf": lambda x: x > 0,
+        },
+        "Debt-Free Blue Chip": {
+            "de_ratio": lambda x: x == 0,
+            "roe": lambda x: x > 12,
+            "sales": lambda x: x > 5000,  # Crore assumed
+        },
+        "Turnaround Watch": {
+            "revenue_cagr_3yr": lambda x: x > 10,
+            "fcf_latest": lambda x: x > 0,
+            "de_ratio_trend": lambda x: x.diff().iloc[-1] < 0,  # declining YoY
+        },
+    }
+
+    if preset not in presets:
+        raise ValueError(f"Unknown preset: {preset}")
+
+    rules = presets[preset]
+
+    mask = pd.Series(True, index=df.index)
+    for col, condition in rules.items():
+        if col in df.columns:
+            mask &= condition(df[col])
+
+    df = df[mask].copy()
+
+    # --- Composite Quality Score (simple average of normalized metrics) ---
+    score_components = []
+    for col in rules.keys():
+        if col in df.columns and df[col].dtype != object:
+            norm = (df[col] - df[col].min()) / (df[col].max() - df[col].min() + 1e-9)
+            score_components.append(norm)
+
+    if score_components:
+        df["composite_quality_score"] = pd.concat(score_components, axis=1).mean(axis=1)
+    else:
+        df["composite_quality_score"] = 0
+
+    df = df.sort_values(by="composite_quality_score", ascending=False)
+    return df
+
+from src.screener.engine1 import apply_preset
+
+# Assume financial_ratios is your 92-company DataFrame
+result = apply_preset(financial_ratios, "Quality Compounder")
+print(result[["company_id", "composite_quality_score"]])
+
+
+o/p
+Empty DataFrame
+Columns: [company_id, composite_quality_score]
+Index: []
+
+def run_all_presets(financial_ratios: pd.DataFrame):
+    """
+    Run all 6 preset screeners on the given universe.
+    Returns a dict of {preset_name: filtered_df}.
+    """
+    presets = [
+        "Quality Compounder",
+        "Value Pick",
+        "Growth Accelerator",
+        "Dividend Champion",
+        "Debt-Free Blue Chip",
+        "Turnaround Watch",
+    ]
+
+    results = {}
+    for preset in presets:
+        df_preset = apply_preset(financial_ratios, preset)
+        results[preset] = df_preset
+    return results
+
+import pandas as pd
+import numpy as np
+
+np.random.seed(42)
+
+financial_ratios = pd.DataFrame({
+    "company_id": [f"C{i:03d}" for i in range(1, 93)],
+    "company_name": [f"Company_{i}" for i in range(1, 93)],
+    "ROE": np.random.uniform(5, 25, 92),
+    "DE": np.random.uniform(0, 3, 92),
+    "FCF": np.random.randint(-100, 500, 92),
+    "Revenue_CAGR_5yr": np.random.uniform(0, 20, 92),
+    "PAT_CAGR_5yr": np.random.uniform(0, 30, 92),
+    "PE": np.random.uniform(5, 30, 92),
+    "PB": np.random.uniform(0.5, 5, 92),
+    "Dividend_Yield": np.random.uniform(0, 5, 92),
+    "Dividend_Payout": np.random.uniform(20, 90, 92),
+    "Revenue": np.random.randint(1000, 10000, 92),
+    "Revenue_CAGR_3yr": np.random.uniform(0, 15, 92),
+    "FCF_Latest": np.random.randint(-50, 200, 92),
+    "DE_Declining_YoY": np.random.choice([True, False], 92),
+})
+
+
+for p in presets:
+    result = apply_preset(financial_ratios, p)
+    print(f"{p}: {len(result)} companies")
+
+o/p:
+Quality Compounder: 5 companies
+Value Pick: 20 companies
+Growth Accelerator: 4 companies
+Dividend Champion: 44 companies
+Debt-Free Blue Chip: 0 companies
+Turnaround Watch: 11 companies
+
+
+presets = [
+    "Quality Compounder",
+    "Value Pick",
+    "Growth Accelerator",
+    "Dividend Champion",
+    "Debt-Free Blue Chip",
+    "Turnaround Watch",
+]
+
+for p in presets:
+    result = apply_preset(financial_ratios, p)
+    print(f"{p}: {len(result)} companies")
+    print(result[["company_id", "company_name"]].head(), "\n")
+
+
+o/p:
+Quality Compounder: 5 companies
+   company_id company_name
+25       C026   Company_26
+30       C031   Company_31
+43       C044   Company_44
+76       C077   Company_77
+87       C088   Company_88 
+
+Value Pick: 20 companies
+   company_id company_name
+5        C006    Company_6
+7        C008    Company_8
+9        C010   Company_10
+17       C018   Company_18
+18       C019   Company_19 
+
+Growth Accelerator: 4 companies
+   company_id company_name
+25       C026   Company_26
+76       C077   Company_77
+77       C078   Company_78
+82       C083   Company_83 
+
+Dividend Champion: 44 companies
+  company_id company_name
+0       C001    Company_1
+1       C002    Company_2
+3       C004    Company_4
+7       C008    Company_8
+9       C010   Company_10 
+
+Debt-Free Blue Chip: 0 companies
+Empty DataFrame
+Columns: [company_id, company_name]
+Index: [] 
+
+Turnaround Watch: 11 companies
+   company_id company_name
+2        C003    Company_3
+3        C004    Company_4
+5        C006    Company_6
+29       C030   Company_30
+30       C031   Company_31 
+
+
+def winsorize_and_scale(series: pd.Series) -> pd.Series:
+    p10, p90 = series.quantile(0.1), series.quantile(0.9)
+    clipped = series.clip(lower=p10, upper=p90)
+    return 100 * (clipped - clipped.min()) / (clipped.max() - clipped.min() + 1e-9)
+def compute_composite_score(df: pd.DataFrame) -> pd.DataFrame:
+    metrics = {
+        "ROE": 0.15, "ROCE": 0.10, "NPM": 0.10,
+        "FCF_CAGR": 0.15, "CFO_PAT": 0.10, "FCF_Positive": 0.05,
+        "Revenue_CAGR_5yr": 0.10, "PAT_CAGR_5yr": 0.10,
+        "DE_Score": 0.10, "ICR_Score": 0.05,
+    }
+
+    df_scores = pd.DataFrame(index=df.index)
+
+    for col, weight in metrics.items():
+        df_scores[col] = winsorize_and_scale(df[col]) * weight
+
+    df["composite_quality_score"] = df_scores.sum(axis=1)
+    return df
+
+import pandas as pd
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    # Use openpyxl (already bundled with Anaconda)
+    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
+        for preset, df in preset_results.items():
+            # Sort by composite score descending
+            df_sorted = df.sort_values("composite_quality_score", ascending=False)
+            df_sorted.to_excel(writer, sheet_name=preset, index=False)
+
+    print(f"Exported {len(preset_results)} presets to {filename}")
+
+def compute_composite_score(df: pd.DataFrame) -> pd.DataFrame:
+    metrics = {
+        "ROE": 0.35,                # Profitability weight
+        "Revenue_CAGR_5yr": 0.20,   # Growth
+        "PAT_CAGR_5yr": 0.20,       # Growth
+        "FCF": 0.15,                # Cash quality
+        "DE": 0.10,                 # Leverage
+    }
+
+    df_scores = pd.DataFrame(index=df.index)
+
+    for col, weight in metrics.items():
+        df_scores[col] = winsorize_and_scale(df[col]) * weight
+
+    df["composite_quality_score"] = df_scores.sum(axis=1)
+    return df
+
+financial_ratios["ROCE"] = np.random.uniform(5, 20, len(financial_ratios))
+financial_ratios["NPM"] = np.random.uniform(5, 25, len(financial_ratios))
+financial_ratios["FCF_CAGR"] = np.random.uniform(-5, 15, len(financial_ratios))
+financial_ratios["CFO_PAT"] = np.random.uniform(0.5, 1.5, len(financial_ratios))
+financial_ratios["FCF_Positive"] = (financial_ratios["FCF"] > 0).astype(int)
+financial_ratios["DE_Score"] = 1 / (1 + financial_ratios["DE"]) * 100
+financial_ratios["ICR_Score"] = np.random.uniform(0, 100, len(financial_ratios))
+
+for p in presets:
+    result = apply_preset(financial_ratios, p)
+    result = compute_composite_score(result)
+    print(f"{p}: {len(result)} companies")
+    print(result[["company_id", "company_name", "composite_quality_score"]].head(), "\n")
+
+o/p:
+Quality Compounder: 5 companies
+   company_id company_name  composite_quality_score
+25       C026   Company_26                48.574356
+30       C031   Company_31                37.971235
+43       C044   Company_44                73.672582
+76       C077   Company_77                55.759815
+87       C088   Company_88                34.173342 
+
+Value Pick: 20 companies
+   company_id company_name  composite_quality_score
+5        C006    Company_6                38.204390
+7        C008    Company_8                69.664492
+9        C010   Company_10                63.945167
+17       C018   Company_18                49.237128
+18       C019   Company_19                24.447040 
+
+Growth Accelerator: 4 companies
+   company_id company_name  composite_quality_score
+25       C026   Company_26                45.826143
+76       C077   Company_77                63.062348
+77       C078   Company_78                37.164288
+82       C083   Company_83                63.691710 
+
+Dividend Champion: 44 companies
+  company_id company_name  composite_quality_score
+0       C001    Company_1                48.990493
+1       C002    Company_2                65.462897
+3       C004    Company_4                59.286314
+7       C008    Company_8                69.876826
+9       C010   Company_10                57.815209 
+
+Debt-Free Blue Chip: 0 companies
+Empty DataFrame
+Columns: [company_id, company_name, composite_quality_score]
+Index: [] 
+
+Turnaround Watch: 11 companies
+   company_id company_name  composite_quality_score
+2        C003    Company_3                83.064639
+3        C004    Company_4                64.862030
+5        C006    Company_6                45.629059
+29       C030   Company_30                25.427572
+30       C031   Company_31                77.024122 
+
+def winsorize_and_scale(series: pd.Series) -> pd.Series:
+    p10, p90 = series.quantile(0.1), series.quantile(0.9)
+    clipped = series.clip(lower=p10, upper=p90)
+    return 100 * (clipped - clipped.min()) / (clipped.max() - clipped.min() + 1e-9)
+
+
+def compute_composite_score(df: pd.DataFrame) -> pd.DataFrame:
+    metrics = {
+        "ROE": 0.15, "ROCE": 0.10, "NPM": 0.10,
+        "FCF_CAGR": 0.15, "CFO_PAT": 0.10, "FCF_Positive": 0.05,
+        "Revenue_CAGR_5yr": 0.10, "PAT_CAGR_5yr": 0.10,
+        "DE_Score": 0.10, "ICR_Score": 0.05,
+    }
+
+    df_scores = pd.DataFrame(index=df.index)
+
+    for col, weight in metrics.items():
+        df_scores[col] = winsorize_and_scale(df[col]) * weight
+
+    df["composite_quality_score"] = df_scores.sum(axis=1)
+    return df
+
+def sector_relative_normalisation(df: pd.DataFrame) -> pd.DataFrame:
+    df["sector_score"] = df.groupby("broad_sector")["composite_quality_score"].transform(
+        lambda x: 100 * (x - x.min()) / (x.max() - x.min() + 1e-9)
+    )
+    return df
+
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
+        for preset, df in preset_results.items():
+            df_sorted = df.sort_values("composite_quality_score", ascending=False)
+            df_sorted.to_excel(writer, sheet_name=preset, index=False)
+    print(f"Exported {len(preset_results)} presets to {filename}")
+
+
+preset_results = {}
+for p in presets:
+    result = apply_preset(financial_ratios, p)
+    result = compute_composite_score(result)
+    result = sector_relative_normalisation(result)  # works now
+    preset_results[p] = result
+
+export_presets_to_excel(preset_results)
+
+o/p:
+Exported 6 presets to screener_output.xlsx
+
+import pandas as pd
+
+def winsorize_and_scale(series: pd.Series) -> pd.Series:
+    """
+    Caps values at the 10th and 90th percentile (winsorisation),
+    then rescales to a 0–100 range.
+    """
+    p10, p90 = series.quantile(0.1), series.quantile(0.9)
+    clipped = series.clip(lower=p10, upper=p90)
+    return 100 * (clipped - clipped.min()) / (clipped.max() - clipped.min() + 1e-9)
+
+metrics = [
+    "ROE", "ROCE", "NPM",
+    "FCF_CAGR", "CFO_PAT", "FCF_Positive",
+    "Revenue_CAGR_5yr", "PAT_CAGR_5yr",
+    "DE_Score", "ICR_Score"
+]
+
+for m in metrics:
+    financial_ratios[m + "_scaled"] = winsorize_and_scale(financial_ratios[m])
+
+def compute_composite_score(df: pd.DataFrame) -> pd.DataFrame:
+    weights = {
+        "ROE_scaled": 0.15, "ROCE_scaled": 0.10, "NPM_scaled": 0.10,
+        "FCF_CAGR_scaled": 0.15, "CFO_PAT_scaled": 0.10, "FCF_Positive_scaled": 0.05,
+        "Revenue_CAGR_5yr_scaled": 0.10, "PAT_CAGR_5yr_scaled": 0.10,
+        "DE_Score_scaled": 0.10, "ICR_Score_scaled": 0.05,
+    }
+
+    df["composite_quality_score"] = sum(df[col] * w for col, w in weights.items())
+    return df
+
+
+result = compute_composite_score(financial_ratios)
+print(result[["company_id", "company_name", "composite_quality_score"]].head())
+
+o/p:
+company_id company_name  composite_quality_score
+0       C001    Company_1                44.565232
+1       C002    Company_2                66.636132
+2       C003    Company_3                76.401618
+3       C004    Company_4                39.482966
+4       C005    Company_5                50.765501
+
+def sector_relative_normalisation(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalises composite scores within each broad_sector group.
+    Each sector is scaled independently to 0–100.
+    """
+    df["sector_score"] = df.groupby("broad_sector")["composite_quality_score"].transform(
+        lambda x: 100 * (x - x.min()) / (x.max() - x.min() + 1e-9)
+    )
+    return df
+
+
+import numpy as np
+financial_ratios["broad_sector"] = np.random.choice(
+    ["IT", "Pharma", "Banking", "FMCG", "Energy"], 
+    size=len(financial_ratios)
+)
+
+
+financial_ratios = compute_composite_score(financial_ratios)
+
+financial_ratios = sector_relative_normalisation(financial_ratios)
+
+
+print(financial_ratios[["company_id", "company_name", "broad_sector", "composite_quality_score", "sector_score"]].head())
+
+o/P:
+
+ company_id company_name broad_sector  composite_quality_score  sector_score
+0       C001    Company_1       Pharma                44.565232     21.823995
+1       C002    Company_2      Banking                66.636132    100.000000
+2       C003    Company_3         FMCG                76.401618     94.268313
+3       C004    Company_4       Energy                39.482966     20.365081
+4       C005    Company_5       Pharma                50.765501     36.159518
+
+import pandas as pd
+
+def run_all_presets(financial_ratios: pd.DataFrame, presets: list) -> dict:
+    preset_results = {}
+    for p in presets:
+        # Apply preset filter
+        result = apply_preset(financial_ratios, p)
+        if result.empty:
+            continue
+
+        # Compute composite score
+        result = compute_composite_score(result)
+
+        # Add sector-relative score (if broad_sector exists)
+        if "broad_sector" in result.columns:
+            result = sector_relative_normalisation(result)
+
+        # Keep only top 20 KPI columns + scores
+        kpi_cols = [
+            "company_id", "company_name", "ROE", "ROCE", "NPM",
+            "FCF_CAGR", "CFO_PAT", "FCF_Positive",
+            "Revenue_CAGR_5yr", "PAT_CAGR_5yr",
+            "DE", "ICR_Score", "PE", "PB",
+            "Dividend_Yield", "Dividend_Payout",
+            "Revenue", "Revenue_CAGR_3yr", "FCF_Latest", "DE_Declining_YoY",
+            "composite_quality_score"
+        ]
+        available_cols = [c for c in kpi_cols if c in result.columns]
+        result = result[available_cols].sort_values("composite_quality_score", ascending=False)
+
+        preset_results[p] = result
+
+    return preset_results
+
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
+        for preset, df in preset_results.items():
+            df.to_excel(writer, sheet_name=preset, index=False)
+    print(f"✅ Exported {len(preset_results)} presets to {filename}")
+
+
+presets = [
+    "Quality Compounder",
+    "Value Pick",
+    "Growth Accelerator",
+    "Dividend Champion",
+    "Debt-Free Blue Chip",
+    "Turnaround Watch",
+]
+
+preset_results = run_all_presets(financial_ratios, presets)
+export_presets_to_excel(preset_results)
+
+
+o/p:
+Exported 5 presets to screener_output.xlsx
+
+import pandas as pd
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+        for preset, df in preset_results.items():
+            df_sorted = df.sort_values("composite_quality_score", ascending=False)
+            df_sorted.to_excel(writer, sheet_name=preset, index=False)
+
+            workbook = writer.book
+            worksheet = writer.sheets[preset]
+
+            # Define formats
+            green_fmt = workbook.add_format({"bg_color": "#C6EFCE"})
+            red_fmt = workbook.add_format({"bg_color": "#FFC7CE"})
+
+            # Apply preset-specific rules
+            if preset == "Quality Compounder":
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": ">", "value": 15, "format": green_fmt})
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": "<=", "value": 15, "format": red_fmt})
+
+            elif preset == "Value Pick":
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": "<", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": ">=", "value": 20, "format": red_fmt})
+
+            elif preset == "Growth Accelerator":
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": ">", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": "<=", "value": 20, "format": red_fmt})
+
+            elif preset == "Dividend Champion":
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": ">", "value": 2, "format": green_fmt})
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": "<=", "value": 2, "format": red_fmt})
+
+            elif preset == "Debt-Free Blue Chip":
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "=", "value": 0, "format": green_fmt})
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "!=", "value": 0, "format": red_fmt})
+
+            elif preset == "Turnaround Watch":
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": ">", "value": 10, "format": green_fmt})
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": "<=", "value": 10, "format": red_fmt})
+
+    print(f"✅ Exported {len(preset_results)} presets to {filename} with conditional formatting")
+
+
+import pandas as pd
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+        for preset, df in preset_results.items():
+            # Sort by composite score descending
+            df_sorted = df.sort_values("composite_quality_score", ascending=False)
+
+            # Include both absolute and sector-relative scores
+            cols_to_export = list(df_sorted.columns)
+            if "sector_score" not in cols_to_export:
+                df_sorted["sector_score"] = None
+                cols_to_export.append("sector_score")
+
+            df_sorted.to_excel(writer, sheet_name=preset, index=False, columns=cols_to_export)
+
+            workbook = writer.book
+            worksheet = writer.sheets[preset]
+
+            # Define formats
+            green_fmt = workbook.add_format({"bg_color": "#C6EFCE"})
+            red_fmt = workbook.add_format({"bg_color": "#FFC7CE"})
+
+            # Apply preset-specific rules
+            if preset == "Quality Compounder":
+                # ROE threshold example
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": ">", "value": 15, "format": green_fmt})
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": "<=", "value": 15, "format": red_fmt})
+
+            elif preset == "Value Pick":
+                # PE threshold example
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": "<", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": ">=", "value": 20, "format": red_fmt})
+
+            elif preset == "Growth Accelerator":
+                # PAT CAGR threshold example
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": ">", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": "<=", "value": 20, "format": red_fmt})
+
+            elif preset == "Dividend Champion":
+                # Dividend Yield threshold example
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": ">", "value": 2, "format": green_fmt})
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": "<=", "value": 2, "format": red_fmt})
+
+            elif preset == "Debt-Free Blue Chip":
+                # DE threshold example
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "=", "value": 0, "format": green_fmt})
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "!=", "value": 0, "format": red_fmt})
+
+            elif preset == "Turnaround Watch":
+                # Revenue CAGR 3yr threshold example
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": ">", "value": 10, "format": green_fmt})
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": "<=", "value": 10, "format": red_fmt})
+
+    print(f"✅ Exported {len(preset_results)} presets to {filename} with composite + sector-relative scores and conditional formatting")
+
+
+import pandas as pd
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+        for preset, df in preset_results.items():
+            df_sorted = df.sort_values("composite_quality_score", ascending=False)
+            df_sorted.to_excel(writer, sheet_name=preset, index=False)
+
+            workbook = writer.book
+            worksheet = writer.sheets[preset]
+
+            # Define formats
+            green_fmt = workbook.add_format({"bg_color": "#C6EFCE"})
+            red_fmt = workbook.add_format({"bg_color": "#FFC7CE"})
+
+            # Apply preset-specific rules
+            if preset == "Quality Compounder":
+                # ROE > 15% passes
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": ">", "value": 15, "format": green_fmt})
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": "<=", "value": 15, "format": red_fmt})
+
+            elif preset == "Value Pick":
+                # PE < 20 passes
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": "<", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": ">=", "value": 20, "format": red_fmt})
+
+            elif preset == "Growth Accelerator":
+                # PAT CAGR > 20% passes
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": ">", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": "<=", "value": 20, "format": red_fmt})
+
+            elif preset == "Dividend Champion":
+                # Dividend Yield > 2% passes
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": ">", "value": 2, "format": green_fmt})
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": "<=", "value": 2, "format": red_fmt})
+
+            elif preset == "Debt-Free Blue Chip":
+                # DE = 0 passes
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "=", "value": 0, "format": green_fmt})
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "!=", "value": 0, "format": red_fmt})
+
+            elif preset == "Turnaround Watch":
+                # Revenue CAGR 3yr > 10% passes
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": ">", "value": 10, "format": green_fmt})
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": "<=", "value": 10, "format": red_fmt})
+
+    print(f"✅ Exported {len(preset_results)} presets to {filename} with conditional formatting")
+
+
+import pandas as pd
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+        summary_data = []
+
+        for preset, df in preset_results.items():
+            df_sorted = df.sort_values("composite_quality_score", ascending=False)
+            df_sorted.to_excel(writer, sheet_name=preset, index=False)
+
+            # Collect summary stats
+            avg_composite = df_sorted["composite_quality_score"].mean()
+            avg_sector = df_sorted["sector_score"].mean() if "sector_score" in df_sorted.columns else None
+            summary_data.append({
+                "Preset": preset,
+                "Companies": len(df_sorted),
+                "Avg Composite Score": round(avg_composite, 2),
+                "Avg Sector Score": round(avg_sector, 2) if avg_sector is not None else None
+            })
+
+            # Conditional formatting per preset
+            workbook = writer.book
+            worksheet = writer.sheets[preset]
+            green_fmt = workbook.add_format({"bg_color": "#C6EFCE"})
+            red_fmt = workbook.add_format({"bg_color": "#FFC7CE"})
+
+            if preset == "Quality Compounder":
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": ">", "value": 15, "format": green_fmt})
+                worksheet.conditional_format("C2:C100", {"type": "cell", "criteria": "<=", "value": 15, "format": red_fmt})
+
+            elif preset == "Value Pick":
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": "<", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("H2:H100", {"type": "cell", "criteria": ">=", "value": 20, "format": red_fmt})
+
+            elif preset == "Growth Accelerator":
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": ">", "value": 20, "format": green_fmt})
+                worksheet.conditional_format("I2:I100", {"type": "cell", "criteria": "<=", "value": 20, "format": red_fmt})
+
+            elif preset == "Dividend Champion":
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": ">", "value": 2, "format": green_fmt})
+                worksheet.conditional_format("K2:K100", {"type": "cell", "criteria": "<=", "value": 2, "format": red_fmt})
+
+            elif preset == "Debt-Free Blue Chip":
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "=", "value": 0, "format": green_fmt})
+                worksheet.conditional_format("L2:L100", {"type": "cell", "criteria": "!=", "value": 0, "format": red_fmt})
+
+            elif preset == "Turnaround Watch":
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": ">", "value": 10, "format": green_fmt})
+                worksheet.conditional_format("M2:M100", {"type": "cell", "criteria": "<=", "value": 10, "format": red_fmt})
+
+        # Create summary sheet
+        summary_df = pd.DataFrame(summary_data)
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+        # Format summary sheet
+        summary_ws = writer.sheets["Summary"]
+        workbook = writer.book
+        bold_fmt = workbook.add_format({"bold": True})
+        summary_ws.set_row(0, None, bold_fmt)
+
+    print(f"✅ Exported {len(preset_results)} presets to {filename} with summary dashboard + conditional formatting")
+
+
+import pandas as pd
+
+def export_presets_to_excel(preset_results: dict, filename="screener_output.xlsx"):
+    with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+        summary_data = []
+
+        for preset, df in preset_results.items():
+            df_sorted = df.sort_values("composite_quality_score", ascending=False)
+            df_sorted.to_excel(writer, sheet_name=preset, index=False)
+
+            avg_composite = df_sorted["composite_quality_score"].mean()
+            avg_sector = df_sorted["sector_score"].mean() if "sector_score" in df_sorted.columns else None
+            summary_data.append({
+                "Preset": preset,
+                "Companies": len(df_sorted),
+                "Avg Composite Score": round(avg_composite, 2),
+                "Avg Sector Score": round(avg_sector, 2) if avg_sector is not None else None
+            })
+
+            # Conditional formatting rules (same as before)
+            workbook = writer.book
+            worksheet = writer.sheets[preset]
+            green_fmt = workbook.add_format({"bg_color": "#C6EFCE"})
+            red_fmt = workbook.add_format({"bg_color": "#FFC7CE"})
+            # … apply preset-specific rules here …
+
+        # Create summary sheet
+        summary_df = pd.DataFrame(summary_data)
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+        workbook = writer.book
+        summary_ws = writer.sheets["Summary"]
+
+        # Bold header row
+        bold_fmt = workbook.add_format({"bold": True})
+        summary_ws.set_row(0, None, bold_fmt)
+
+        # Add bar chart for Avg Composite Score
+        chart1 = workbook.add_chart({"type": "column"})
+        chart1.add_series({
+            "name": "Avg Composite Score",
+            "categories": ["Summary", 1, 0, len(summary_df), 0],  # Preset names
+            "values": ["Summary", 1, 2, len(summary_df), 2],      # Composite scores
+            "fill": {"color": "#4F81BD"}
+        })
+        chart1.set_title({"name": "Average Composite Score by Preset"})
+        chart1.set_x_axis({"name": "Preset"})
+        chart1.set_y_axis({"name": "Score"})
+        summary_ws.insert_chart("F2", chart1)
+
+        # Add bar chart for Avg Sector Score
+        chart2 = workbook.add_chart({"type": "column"})
+        chart2.add_series({
+            "name": "Avg Sector Score",
+            "categories": ["Summary", 1, 0, len(summary_df), 0],
+            "values": ["Summary", 1, 3, len(summary_df), 3],
+            "fill": {"color": "#9BBB59"}
+        })
+        chart2.set_title({"name": "Average Sector Score by Preset"})
+        chart2.set_x_axis({"name": "Preset"})
+        chart2.set_y_axis({"name": "Score"})
+        summary_ws.insert_chart("F20", chart2)
+
+    print(f"✅ Exported {len(preset_results)} presets to {filename} with summary dashboard, charts, and conditional formatting")
+
+# src/analytics/peer.py
+
+import pandas as pd
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx"):
+    """
+    Load peer_groups.xlsx and compute percentile ranks for 10 metrics
+    within each of 11 peer groups.
+    """
+
+    # Load peer group data
+    df = pd.read_excel(filepath)
+
+    # Define metrics to rank
+    metrics = [
+        "ROE", "ROCE", "NPM",
+        "FCF_CAGR", "CFO_PAT", "Revenue_CAGR_5yr",
+        "PAT_CAGR_5yr", "DE", "ICR", "PE"
+    ]
+
+    # Compute percentile ranks within each peer group
+    for metric in metrics:
+        df[f"{metric}_PERCENT_RANK"] = df.groupby("peer_group")[metric].rank(
+            pct=True, method="average"
+        ) * 100  # scale to 0–100
+
+    return df
+
+from src.analytics.peer import compute_peer_percentiles
+
+# src/analytics/peer.py
+
+import pandas as pd
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx"):
+    """
+    Load peer_groups.xlsx and compute percentile ranks for 10 metrics
+    within each peer group.
+    """
+
+    df = pd.read_excel(filepath)
+
+    metrics = [
+        "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "FCF", "PAT_CAGR_5yr",
+        "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+        "Interest_Coverage", "Asset_Turnover"
+    ]
+
+    for metric in metrics:
+        if metric == "DE":
+            # Inverse ranking: lower D/E is better
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, ascending=False, method="average") * 100
+            )
+        else:
+            # Normal ranking: higher is better
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+            )
+
+    return df
+
+cd for metric in metrics:
+    if metric == "DE":
+        # Compute normal percentile rank (higher = worse for D/E)
+        raw_rank = df.groupby("peer_group")[metric].rank(pct=True, method="average")
+        # Invert it: lower D/E → higher percentile
+        df[f"{metric}_PERCENT_RANK"] = (1 - raw_rank) * 100
+    else:
+        # Normal ranking: higher is better
+        df[f"{metric}_PERCENT_RANK"] = (
+            df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+        )
+
+# src/analytics/peer.py
+
+import pandas as pd
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx", output="peer_rankings.xlsx"):
+    """
+    Load peer_groups.xlsx and compute percentile ranks for 10 metrics
+    within each peer group. Export one sheet per peer group.
+    """
+
+    df = pd.read_excel(filepath)
+
+    metrics = [
+        "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "FCF", "PAT_CAGR_5yr",
+        "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+        "Interest_Coverage", "Asset_Turnover"
+    ]
+
+    # Compute percentile ranks
+    for metric in metrics:
+        if metric == "DE":
+            # Inverse ranking: lower D/E is better
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, ascending=False, method="average") * 100
+            )
+        else:
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+            )
+
+    # Export one sheet per peer group
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for group, group_df in df.groupby("peer_group"):
+            group_df.to_excel(writer, sheet_name=str(group), index=False)
+
+    return df
+
+
+import os
+print(os.getcwd())
+print(os.listdir())
+
+C:\Users\srisa\Desktop\Week_2 Stock Market\project_root
+['.pytest_cache', 'FINANCIAL RATIO ENGINE.txt', 'FINANCIAL RATIO ENGINE1.txt', 'financial_ratios.csv', 'main.py', 'output', 'peer_groups.xlsx', 'ratio_edge_cases.log', 'run_tests.bat', 'screener_output.xlsx', 'SPRINT_3', 'src', 'tests']
+
+import pandas as pd
+import numpy as np
+
+# Define peer groups
+peer_groups = [
+    "IT", "Pharma", "Banking", "FMCG", "Energy",
+    "Automobile", "Telecom", "Infrastructure", "Retail", "Metals", "Chemicals"
+]
+
+# Number of companies per group
+companies_per_group = 5
+
+rows = []
+for group in peer_groups:
+    for i in range(companies_per_group):
+        company_id = f"{group[:2].upper()}{i+1:03d}"
+        company_name = f"{group}Co{i+1}"
+        rows.append({
+            "company_id": company_id,
+            "company_name": company_name,
+            "peer_group": group,
+            "ROE": np.random.uniform(5, 25),
+            "ROCE": np.random.uniform(5, 20),
+            "Net_Profit_Margin": np.random.uniform(5, 15),
+            "DE": np.random.uniform(0.1, 1.5),
+            "FCF": np.random.uniform(50, 200),
+            "PAT_CAGR_5yr": np.random.uniform(5, 20),
+            "Revenue_CAGR_5yr": np.random.uniform(5, 20),
+            "EPS_CAGR_5yr": np.random.uniform(5, 20),
+            "Interest_Coverage": np.random.uniform(1, 10),
+            "Asset_Turnover": np.random.uniform(0.5, 2.0)
+        })
+
+# Create DataFrame
+df = pd.DataFrame(rows)
+
+# Save to Excel
+df.to_excel("peer_groups.xlsx", index=False)
+
+print("✅ peer_groups.xlsx created with", len(df), "companies across", len(peer_groups), "peer groups")
+
+o/p:
+ peer_groups.xlsx created with 55 companies across 11 peer groups
+
+import os
+print(os.getcwd())   # shows current working directory
+print(os.listdir())  # should list peer_rankings.xlsx
+
+C:\Users\srisa\Desktop\Week_2 Stock Market\project_root
+['.pytest_cache', 'FINANCIAL RATIO ENGINE.txt', 'FINANCIAL RATIO ENGINE1.txt', 'financial_ratios.csv', 'main.py', 'output', 'peer_groups.xlsx', 'ratio_edge_cases.log', 'run_tests.bat', 'screener_output.xlsx', 'SPRINT_3', 'src', 'tests']
+
+import pandas as pd
+import numpy as np
+
+# Define peer groups
+peer_groups = [
+    "IT", "Pharma", "Banking", "FMCG", "Energy",
+    "Automobile", "Telecom", "Infrastructure", "Retail", "Metals", "Chemicals"
+]
+
+# Number of companies per group
+companies_per_group = 5
+
+rows = []
+for group in peer_groups:
+    for i in range(companies_per_group):
+        company_id = f"{group[:2].upper()}{i+1:03d}"
+        company_name = f"{group}Co{i+1}"
+        rows.append({
+            "company_id": company_id,
+            "company_name": company_name,
+            "peer_group": group,
+            "ROE": np.random.uniform(5, 25),
+            "ROCE": np.random.uniform(5, 20),
+            "Net_Profit_Margin": np.random.uniform(5, 15),
+            "DE": np.random.uniform(0.1, 1.5),
+            "FCF": np.random.uniform(50, 200),
+            "PAT_CAGR_5yr": np.random.uniform(5, 20),
+            "Revenue_CAGR_5yr": np.random.uniform(5, 20),
+            "EPS_CAGR_5yr": np.random.uniform(5, 20),
+            "Interest_Coverage": np.random.uniform(1, 10),
+            "Asset_Turnover": np.random.uniform(0.5, 2.0)
+        })
+
+# Create DataFrame
+df = pd.DataFrame(rows)
+
+# Save to Excel
+df.to_excel("peer_groups.xlsx", index=False)
+
+print("✅ peer_groups.xlsx created with", len(df), "companies across", len(peer_groups), "peer groups")
+
+o/p:peer_groups.xlsx created with 55 companies across 11 peer groups
+
+metrics = [
+    "ROE", "ROCE", "Net_Profit_Margin",
+    "DE", "FCF", "PAT_CAGR_5yr",
+    "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+    "Interest_Coverage", "Asset_Turnover"
+]
+
+for metric in metrics:
+    if metric == "DE":
+        raw_rank = df.groupby("peer_group")[metric].rank(pct=True, method="average")
+        df[f"{metric}_PERCENT_RANK"] = (1 - raw_rank) * 100
+    else:
+        df[f"{metric}_PERCENT_RANK"] = (
+            df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+        )
+
+import pandas as pd
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx", output="peer_rankings.xlsx"):
+    """
+    Load peer_groups.xlsx and compute percentile ranks for 10 metrics
+    within each peer group. Export one sheet per peer group.
+    """
+
+    df = pd.read_excel(filepath)
+
+    metrics = [
+        "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "FCF", "PAT_CAGR_5yr",
+        "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+        "Interest_Coverage", "Asset_Turnover"
+    ]
+
+    for metric in metrics:
+        if metric == "DE":
+            # Invert percentile: lower D/E = higher rank
+            raw_rank = df.groupby("peer_group")[metric].rank(pct=True, method="average")
+            df[f"{metric}_PERCENT_RANK"] = (1 - raw_rank) * 100
+        else:
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+            )
+
+    # Export one sheet per peer group
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for group, group_df in df.groupby("peer_group"):
+            group_df.to_excel(writer, sheet_name=str(group), index=False)
+
+    return df
+
+
+peer_df = compute_peer_percentiles(
+    filepath="peer_groups.xlsx",
+    output="peer_rankings.xlsx"
+)
+
+print(peer_df.head())
+
+o/p:company_id company_name peer_group        ROE       ROCE  Net_Profit_Margin  \
+0      IT001        ITCo1         IT  16.864431  18.384537           6.853302   
+1      IT002        ITCo2         IT  15.428914   5.954614          13.313735   
+2      IT003        ITCo3         IT  16.435447  12.761695           9.304274   
+3      IT004        ITCo4         IT  17.626151  13.875457          12.026338   
+4      IT005        ITCo5         IT  17.013021  16.153909          10.062661   
+
+         DE         FCF  PAT_CAGR_5yr  Revenue_CAGR_5yr  ...  \
+0  0.210557   85.926525     16.918674          5.520054  ...   
+1  0.938570   67.239950      6.407859         18.644402  ...   
+2  0.543725  115.189394     16.608195         14.028851  ...   
+3  0.432407  126.854567      6.563372         10.767670  ...   
+4  0.987746   60.639832      8.815874         10.427796  ...   
+
+   ROE_PERCENT_RANK  ROCE_PERCENT_RANK  Net_Profit_Margin_PERCENT_RANK  \
+0              60.0              100.0                            20.0   
+1              20.0               20.0                           100.0   
+2              40.0               40.0                            40.0   
+3             100.0               60.0                            80.0   
+4              80.0               80.0                            60.0   
+
+   DE_PERCENT_RANK  FCF_PERCENT_RANK  PAT_CAGR_5yr_PERCENT_RANK  \
+0             80.0              60.0                      100.0   
+1             20.0              40.0                       20.0   
+2             40.0              80.0                       80.0   
+3             60.0             100.0                       40.0   
+4              0.0              20.0                       60.0   
+
+   Revenue_CAGR_5yr_PERCENT_RANK  EPS_CAGR_5yr_PERCENT_RANK  \
+0                           20.0                       60.0   
+1                          100.0                       80.0   
+2                           80.0                      100.0   
+3                           60.0                       40.0   
+4                           40.0                       20.0   
+
+   Interest_Coverage_PERCENT_RANK  Asset_Turnover_PERCENT_RANK  
+0                           100.0                         60.0  
+1                            80.0                         80.0  
+2                            40.0                         40.0  
+3                            60.0                        100.0  
+4                            20.0                         20.0  
+
+[5 rows x 23 columns]
+
+import os
+print(os.getcwd())
+print(os.listdir())
+
+
+C:\Users\srisa\Desktop\Week_2 Stock Market\project_root
+['.pytest_cache', 'FINANCIAL RATIO ENGINE.txt', 'FINANCIAL RATIO ENGINE1.txt', 'financial_ratios.csv', 'main.py', 'output', 'peer_groups.xlsx', 'peer_rankings.xlsx', 'ratio_edge_cases.log', 'run_tests.bat', 'screener_output.xlsx', 'SPRINT_3', 'src', 'tests', '~$peer_groups.xlsx']
+
+import pandas as pd
+import sqlite3
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx", output_db="peer.db", year=2026):
+    df = pd.read_excel(filepath)
+
+    metrics = [
+        "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "FCF", "PAT_CAGR_5yr",
+        "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+        "Interest_Coverage", "Asset_Turnover"
+    ]
+
+    # Compute percentile ranks
+    for metric in metrics:
+        if metric == "DE":
+            raw_rank = df.groupby("peer_group")[metric].rank(pct=True, method="average")
+            df[f"{metric}_PERCENT_RANK"] = (1 - raw_rank) * 100
+        else:
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+            )
+
+    # Reshape: melt into long format
+    records = []
+    for _, row in df.iterrows():
+        for metric in metrics:
+            records.append({
+                "company_id": row["company_id"],
+                "peer_group_name": row["peer_group"],
+                "metric": metric,
+                "value": row[metric],
+                "percentile_rank": row[f"{metric}_PERCENT_RANK"],
+                "year": year
+            })
+
+    long_df = pd.DataFrame(records)
+
+    # Save into SQLite
+    conn = sqlite3.connect(output_db)
+    long_df.to_sql("peer_percentiles", conn, if_exists="replace", index=False)
+    conn.close()
+
+    return long_df
+
+import pandas as pd
+import sqlite3
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx", output_db="peer.db", year=2026):
+    df = pd.read_excel(filepath)
+
+    metrics = [
+        "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "FCF", "PAT_CAGR_5yr",
+        "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+        "Interest_Coverage", "Asset_Turnover"
+    ]
+
+    # Compute percentile ranks
+    for metric in metrics:
+        if metric == "DE":
+            raw_rank = df.groupby("peer_group")[metric].rank(pct=True, method="average")
+            df[f"{metric}_PERCENT_RANK"] = (1 - raw_rank) * 100
+        else:
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+            )
+
+    # Reshape into long format
+    records = []
+    for _, row in df.iterrows():
+        for metric in metrics:
+            records.append({
+                "company_id": row["company_id"],
+                "peer_group_name": row["peer_group"],
+                "metric": metric,
+                "value": row[metric],
+                "percentile_rank": row[f"{metric}_PERCENT_RANK"],
+                "year": year
+            })
+
+    long_df = pd.DataFrame(records)
+
+    # Save into SQLite
+    conn = sqlite3.connect(output_db)
+    cursor = conn.cursor()
+
+    # Create table if not exists
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS peer_percentiles (
+        company_id TEXT NOT NULL,
+        peer_group_name TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        value REAL,
+        percentile_rank REAL,
+        year INTEGER,
+        PRIMARY KEY (company_id, peer_group_name, metric, year)
+    )
+    """)
+
+    # Insert data
+    long_df.to_sql("peer_percentiles", conn, if_exists="append", index=False)
+
+    conn.commit()
+    conn.close()
+
+    return long_df
+
+import pandas as pd
+import sqlite3
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx", output_db="peer.db", year=2026):
+    df = pd.read_excel(filepath)
+
+    metrics = [
+        "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "FCF", "PAT_CAGR_5yr",
+        "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+        "Interest_Coverage", "Asset_Turnover"
+    ]
+
+    # Compute percentile ranks
+    for metric in metrics:
+        if metric == "DE":
+            raw_rank = df.groupby("peer_group")[metric].rank(pct=True, method="average")
+            df[f"{metric}_PERCENT_RANK"] = (1 - raw_rank) * 100
+        else:
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+            )
+
+    # Reshape into long format
+    records = []
+    for _, row in df.iterrows():
+        for metric in metrics:
+            records.append({
+                "company_id": row["company_id"],
+                "peer_group_name": row["peer_group"],
+                "metric": metric,
+                "value": row[metric],
+                "percentile_rank": row[f"{metric}_PERCENT_RANK"],
+                "year": year
+            })
+
+    long_df = pd.DataFrame(records)
+
+    # Save into SQLite
+    conn = sqlite3.connect(output_db)
+    cursor = conn.cursor()
+
+    # Create tables if not exist
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS peer_percentiles (
+        company_id TEXT NOT NULL,
+        peer_group_name TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        value REAL,
+        percentile_rank REAL,
+        year INTEGER,
+        PRIMARY KEY (company_id, peer_group_name, metric, year)
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS peer_group_summary (
+        peer_group_name TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        avg_percentile REAL,
+        year INTEGER,
+        PRIMARY KEY (peer_group_name, metric, year)
+    )
+    """)
+
+    # Insert detailed data
+    long_df.to_sql("peer_percentiles", conn, if_exists="append", index=False)
+
+    # Compute summary averages
+    summary_df = (
+        long_df.groupby(["peer_group_name", "metric", "year"])["percentile_rank"]
+        .mean()
+        .reset_index()
+        .rename(columns={"percentile_rank": "avg_percentile"})
+    )
+
+    # Insert summary data
+    summary_df.to_sql("peer_group_summary", conn, if_exists="append", index=False)
+
+    conn.commit()
+    conn.close()
+
+    return long_df, summary_df
+
+
+import pandas as pd
+import sqlite3
+
+def compute_peer_percentiles(filepath="peer_groups.xlsx", output_db="peer.db", year=2026):
+    df = pd.read_excel(filepath)
+
+    metrics = [
+        "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "FCF", "PAT_CAGR_5yr",
+        "Revenue_CAGR_5yr", "EPS_CAGR_5yr",
+        "Interest_Coverage", "Asset_Turnover"
+    ]
+
+    # Compute percentile ranks
+    for metric in metrics:
+        if metric == "DE":
+            raw_rank = df.groupby("peer_group")[metric].rank(pct=True, method="average")
+            df[f"{metric}_PERCENT_RANK"] = (1 - raw_rank) * 100
+        else:
+            df[f"{metric}_PERCENT_RANK"] = (
+                df.groupby("peer_group")[metric].rank(pct=True, method="average") * 100
+            )
+
+    # Reshape into long format
+    records = []
+    for _, row in df.iterrows():
+        for metric in metrics:
+            records.append({
+                "company_id": row["company_id"],
+                "peer_group_name": row["peer_group"],
+                "metric": metric,
+                "value": row[metric],
+                "percentile_rank": row[f"{metric}_PERCENT_RANK"],
+                "year": year
+            })
+
+    long_df = pd.DataFrame(records)
+
+    # Save into SQLite
+    conn = sqlite3.connect(output_db)
+    cursor = conn.cursor()
+
+    # Create tables if not exist
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS peer_percentiles (
+        company_id TEXT NOT NULL,
+        peer_group_name TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        value REAL,
+        percentile_rank REAL,
+        year INTEGER,
+        PRIMARY KEY (company_id, peer_group_name, metric, year)
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS peer_group_summary (
+        peer_group_name TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        avg_percentile REAL,
+        year INTEGER,
+        PRIMARY KEY (peer_group_name, metric, year)
+    )
+    """)
+
+    # Insert detailed data
+    long_df.to_sql("peer_percentiles", conn, if_exists="append", index=False)
+
+    # Compute summary averages
+    summary_df = (
+        long_df.groupby(["peer_group_name", "metric", "year"])["percentile_rank"]
+        .mean()
+        .reset_index()
+        .rename(columns={"percentile_rank": "avg_percentile"})
+    )
+
+    # Insert summary data
+    summary_df.to_sql("peer_group_summary", conn, if_exists="append", index=False)
+
+    conn.commit()
+    conn.close()
+
+    return long_df, summary_df
+
+import sqlite3
+import pandas as pd
+
+def compare_peer_groups(db_path="peer.db", group1="IT", group2="Pharma", year=2026):
+    """
+    Compare two peer groups side by side across all metrics for a given year.
+    Returns a Pandas DataFrame with metrics and average percentiles.
+    """
+
+    query = """
+    SELECT 
+        s1.metric,
+        s1.avg_percentile AS group1_avg,
+        s2.avg_percentile AS group2_avg
+    FROM peer_group_summary s1
+    JOIN peer_group_summary s2
+        ON s1.metric = s2.metric AND s1.year = s2.year
+    WHERE s1.peer_group_name = ? 
+      AND s2.peer_group_name = ? 
+      AND s1.year = ?
+    ORDER BY s1.metric;
+    """
+
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query(query, conn, params=(group1, group2, year))
+    conn.close()
+
+    return df
+
+
+print(df["company_id"].unique())
+
+<ArrowStringArray>
+['IT001', 'IT002', 'IT003', 'IT004', 'IT005', 'PH001', 'PH002', 'PH003',
+ 'PH004', 'PH005', 'BA001', 'BA002', 'BA003', 'BA004', 'BA005', 'FM001',
+ 'FM002', 'FM003', 'FM004', 'FM005', 'EN001', 'EN002', 'EN003', 'EN004',
+ 'EN005', 'AU001', 'AU002', 'AU003', 'AU004', 'AU005', 'TE001', 'TE002',
+ 'TE003', 'TE004', 'TE005', 'IN001', 'IN002', 'IN003', 'IN004', 'IN005',
+ 'RE001', 'RE002', 'RE003', 'RE004', 'RE005', 'ME001', 'ME002', 'ME003',
+ 'ME004', 'ME005', 'CH001', 'CH002', 'CH003', 'CH004', 'CH005']
+Length: 55, dtype: str
+
+def plot_company_radar(df, company_id):
+    metrics = ["ROE", "ROCE", "Net_Profit_Margin", "DE", 
+               "FCF", "PAT_CAGR_5yr", "Revenue_CAGR_5yr", "Composite_Score"]
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+
+    row = company_rows.iloc[0]
+    values = [row[m] for m in metrics]
+
+    # Close the polygon
+    values += values[:1]
+    angles = np.linspace(0, 2*np.pi, len(metrics)+1)
+
+    fig, ax = plt.subplots(figsize=(6,6), subplot_kw=dict(polar=True))
+    ax.plot(angles, values, linewidth=2, linestyle='solid', label=row.get("company_name", company_id))
+    ax.fill(angles, values, alpha=0.25)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metrics)
+    ax.set_title(f"Radar Chart: {row.get('company_name', company_id)} ({row.get('peer_group','Unknown')})")
+
+    plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1))
+    plt.show()
+
+plot_company_radar(df, company_id="ACTUAL_ID_FROM_DF")
+
+o/p:
+No data found for company_id=ACTUAL_ID_FROM_DF
+def compute_composite_score(df):
+    # Define weights for each metric
+    metrics = {
+        "ROE": 0.2,
+        "ROCE": 0.2,
+        "Net_Profit_Margin": 0.15,
+        "DE": 0.1,
+        "FCF": 0.1,
+        "PAT_CAGR_5yr": 0.1,
+        "Revenue_CAGR_5yr": 0.15
+    }
+
+    df_scores = pd.DataFrame(index=df.index)
+
+    for col, weight in metrics.items():
+        # Normalize each metric to 0–100
+        col_norm = (df[col] - df[col].min()) / (df[col].max() - df[col].min() + 1e-9) * 100
+        df_scores[col] = col_norm * weight
+
+    df["Composite_Score"] = df_scores.sum(axis=1)
+    return df
+
+
+df = compute_composite_score(df)
+
+plot_peer_group_radar(df, peer_group_name="IT")
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_company_vs_peer(df, company_id, peer_group_name):
+    """
+    Radar chart showing:
+    - Company values as filled polygon
+    - Peer group average as dashed outline
+    Metrics: ROE, ROCE, NPM, D/E, FCF score, PAT CAGR 5yr, Revenue CAGR 5yr, Composite Score
+    """
+
+    metrics = ["ROE", "ROCE", "Net_Profit_Margin", "DE", 
+               "FCF", "PAT_CAGR_5yr", "Revenue_CAGR_5yr", "Composite_Score"]
+
+    # Filter company
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+
+    # Filter peer group
+    group_df = df[df["peer_group"] == peer_group_name]
+    if group_df.empty:
+        print(f"No data found for peer group={peer_group_name}")
+        return
+
+    # Normalize metrics to 0–100 for fair comparison
+    norm_df = group_df.copy()
+    for m in metrics:
+        col = norm_df[m].astype(float)
+        norm_df[m] = 100 * (col - col.min()) / (col.max() - col.min() + 1e-9)
+
+    # Company normalized values
+    company_values = []
+    for m in metrics:
+        col = norm_df[m]
+        # normalize company value using same scale
+        company_values.append(100 * (company[m] - col.min()) / (col.max() - col.min() + 1e-9))
+
+    # Peer group average values
+    peer_avg = norm_df[metrics].mean().tolist()
+
+    # Close polygons
+    company_values += company_values[:1]
+    peer_avg += peer_avg[:1]
+    angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
+    angles += angles[:1]
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(7,7), subplot_kw=dict(polar=True))
+
+    # Company polygon (filled)
+    ax.plot(angles, company_values, linewidth=2, label=company.get("company_name", company_id))
+    ax.fill(angles, company_values, alpha=0.25)
+
+    # Peer group average polygon (dashed outline)
+    ax.plot(angles, peer_avg, linewidth=2, linestyle="dashed", color="red", label=f"{peer_group_name} Avg")
+
+    # Labels
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metrics)
+    ax.set_title(f"Radar Chart: {company.get('company_name', company_id)} vs {peer_group_name} Avg")
+
+    plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1))
+    plt.show()
+
+o/p:
+No data found for company_id=C001
+No data found for company_id=C005
+
+print(df["company_id"].unique())
+
+
+<ArrowStringArray>
+['IT001', 'IT002', 'IT003', 'IT004', 'IT005', 'PH001', 'PH002', 'PH003',
+ 'PH004', 'PH005', 'BA001', 'BA002', 'BA003', 'BA004', 'BA005', 'FM001',
+ 'FM002', 'FM003', 'FM004', 'FM005', 'EN001', 'EN002', 'EN003', 'EN004',
+ 'EN005', 'AU001', 'AU002', 'AU003', 'AU004', 'AU005', 'TE001', 'TE002',
+ 'TE003', 'TE004', 'TE005', 'IN001', 'IN002', 'IN003', 'IN004', 'IN005',
+ 'RE001', 'RE002', 'RE003', 'RE004', 'RE005', 'ME001', 'ME002', 'ME003',
+ 'ME004', 'ME005', 'CH001', 'CH002', 'CH003', 'CH004', 'CH005']
+Length: 55, dtype: str
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_company_vs_peer(df, company_id):
+    metrics = ["ROE", "ROCE", "Net_Profit_Margin", "DE", 
+               "FCF", "PAT_CAGR_5yr", "Revenue_CAGR_5yr", "Composite_Score"]
+
+    # Check company exists
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company["peer_group"]
+
+    # Filter peer group
+    group_df = df[df["peer_group"] == peer_group_name]
+    if group_df.empty:
+        print(f"No data found for peer group={peer_group_name}")
+        return
+
+    # Normalize metrics to 0–100
+    norm_df = group_df.copy()
+    for m in metrics:
+        col = norm_df[m].astype(float)
+        norm_df[m] = 100 * (col - col.min()) / (col.max() - col.min() + 1e-9)
+
+    # Company normalized values
+    company_values = []
+    for m in metrics:
+        col = norm_df[m]
+        company_values.append(100 * (company[m] - col.min()) / (col.max() - col.min() + 1e-9))
+
+    # Peer group average values
+    peer_avg = norm_df[metrics].mean().tolist()
+
+    # Close polygons
+    company_values += company_values[:1]
+    peer_avg += peer_avg[:1]
+    angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
+    angles += angles[:1]
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(7,7), subplot_kw=dict(polar=True))
+
+    # Company polygon (filled)
+    ax.plot(angles, company_values, linewidth=2, label=company.get("company_name", company_id))
+    ax.fill(angles, company_values, alpha=0.25)
+
+    # Peer group average polygon (dashed outline)
+    ax.plot(angles, peer_avg, linewidth=2, linestyle="dashed", color="red", label=f"{peer_group_name} Avg")
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metrics)
+    ax.set_title(f"Radar Chart: {company.get('company_name', company_id)} vs {peer_group_name} Avg")
+
+    plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1))
+    plt.show()
+
+
+# First check available IDs
+print(df["company_id"].unique())
+
+# Then pick one valid ID
+plot_company_vs_peer(df, company_id="ACTUAL_ID_FROM_DF")
+
+
+<ArrowStringArray>
+['IT001', 'IT002', 'IT003', 'IT004', 'IT005', 'PH001', 'PH002', 'PH003',
+ 'PH004', 'PH005', 'BA001', 'BA002', 'BA003', 'BA004', 'BA005', 'FM001',
+ 'FM002', 'FM003', 'FM004', 'FM005', 'EN001', 'EN002', 'EN003', 'EN004',
+ 'EN005', 'AU001', 'AU002', 'AU003', 'AU004', 'AU005', 'TE001', 'TE002',
+ 'TE003', 'TE004', 'TE005', 'IN001', 'IN002', 'IN003', 'IN004', 'IN005',
+ 'RE001', 'RE002', 'RE003', 'RE004', 'RE005', 'ME001', 'ME002', 'ME003',
+ 'ME004', 'ME005', 'CH001', 'CH002', 'CH003', 'CH004', 'CH005']
+Length: 55, dtype: str
+No data found for company_id=ACTUAL_ID_FROM_DF
+
+def plot_all_companies_in_peer_group(df, peer_group_name):
+    """
+    Generate radar charts for all companies in a peer group.
+    Each chart shows the company polygon (filled) vs peer group average (dashed).
+    """
+
+    # Get all company IDs in the peer group
+    company_ids = df[df["peer_group"] == peer_group_name]["company_id"].unique()
+
+    if len(company_ids) == 0:
+        print(f"No companies found for peer group={peer_group_name}")
+        return
+
+    for cid in company_ids:
+        plot_company_vs_peer(df, company_id=cid)
+
+# Generate one radar chart per company in IT peer group
+plot_all_companies_in_peer_group(df, peer_group_name="IT")
+
+# Generate one radar chart per company in Pharma peer group
+plot_all_companies_in_peer_group(df, peer_group_name="Pharma")
+
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_company_vs_peer(df, company_id, export_dir="reports/radar_charts"):
+    metrics = ["ROE", "ROCE", "Net_Profit_Margin", "DE", 
+               "FCF", "PAT_CAGR_5yr", "Revenue_CAGR_5yr", "Composite_Score"]
+
+    # Ensure export directory exists
+    os.makedirs(export_dir, exist_ok=True)
+
+    # Check company exists
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company["peer_group"]
+
+    # Filter peer group
+    group_df = df[df["peer_group"] == peer_group_name]
+    if group_df.empty:
+        print(f"No data found for peer group={peer_group_name}")
+        return
+
+    # Normalize metrics to 0–100
+    norm_df = group_df.copy()
+    for m in metrics:
+        col = norm_df[m].astype(float)
+        norm_df[m] = 100 * (col - col.min()) / (col.max() - col.min() + 1e-9)
+
+    # Company normalized values
+    company_values = []
+    for m in metrics:
+        col = norm_df[m]
+        company_values.append(100 * (company[m] - col.min()) / (col.max() - col.min() + 1e-9))
+
+    # Peer group average values
+    peer_avg = norm_df[metrics].mean().tolist()
+
+    # Close polygons
+    company_values += company_values[:1]
+    peer_avg += peer_avg[:1]
+    angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
+    angles += angles[:1]
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(7,7), subplot_kw=dict(polar=True))
+    ax.plot(angles, company_values, linewidth=2, label=company.get("company_name", company_id))
+    ax.fill(angles, company_values, alpha=0.25)
+    ax.plot(angles, peer_avg, linewidth=2, linestyle="dashed", color="red", label=f"{peer_group_name} Avg")
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metrics)
+    ax.set_title(f"Radar Chart: {company.get('company_name', company_id)} vs {peer_group_name} Avg")
+    plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1))
+
+    # Export as PNG
+    filename = os.path.join(export_dir, f"{company['company_id']}_radar.png")
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"Radar chart saved: {filename}")
+
+
+def export_all_peer_group_charts(df, peer_group_name, export_dir="reports/radar_charts"):
+    company_ids = df[df["peer_group"] == peer_group_name]["company_id"].unique()
+    if len(company_ids) == 0:
+        print(f"No companies found for peer group={peer_group_name}")
+        return
+    for cid in company_ids:
+        plot_company_vs_peer(df, company_id=cid, export_dir=export_dir)
+
+export_all_peer_group_charts(df, peer_group_name="IT")
+
+# Export radar charts for all Pharma companies
+export_all_peer_group_charts(df, peer_group_name="Pharma")
+
+
+o/p:
+Radar chart saved: reports/radar_charts\IT001_radar.png
+Radar chart saved: reports/radar_charts\IT002_radar.png
+Radar chart saved: reports/radar_charts\IT003_radar.png
+Radar chart saved: reports/radar_charts\IT004_radar.png
+Radar chart saved: reports/radar_charts\IT005_radar.png
+Radar chart saved: reports/radar_charts\PH001_radar.png
+Radar chart saved: reports/radar_charts\PH002_radar.png
+Radar chart saved: reports/radar_charts\PH003_radar.png
+Radar chart saved: reports/radar_charts\PH004_radar.png
+Radar chart saved: reports/radar_charts\PH005_radar.png
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_company_vs_peer_or_nifty(df, company_id, nifty_avg_df, export_dir="reports/radar_charts"):
+    """
+    Export radar chart if company has peer group.
+    If no peer group assigned, export single-metric chart vs Nifty 100 average.
+    """
+
+    metrics = ["ROE", "ROCE", "Net_Profit_Margin", "DE", 
+               "FCF", "PAT_CAGR_5yr", "Revenue_CAGR_5yr", "Composite_Score"]
+
+    os.makedirs(export_dir, exist_ok=True)
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company.get("peer_group")
+
+    # Case 1: Company has peer group → radar chart
+    if pd.notna(peer_group_name) and peer_group_name != "No peer group assigned":
+        group_df = df[df["peer_group"] == peer_group_name]
+        if group_df.empty:
+            print(f"No data found for peer group={peer_group_name}")
+            return
+
+        # Normalize metrics
+        norm_df = group_df.copy()
+        for m in metrics:
+            col = norm_df[m].astype(float)
+            norm_df[m] = 100 * (col - col.min()) / (col.max() - col.min() + 1e-9)
+
+        # Company normalized values
+        company_values = []
+        for m in metrics:
+            col = norm_df[m]
+            company_values.append(100 * (company[m] - col.min()) / (col.max() - col.min() + 1e-9))
+
+        # Peer group average
+        peer_avg = norm_df[metrics].mean().tolist()
+
+        # Close polygons
+        company_values += company_values[:1]
+        peer_avg += peer_avg[:1]
+        angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
+        angles += angles[:1]
+
+        fig, ax = plt.subplots(figsize=(7,7), subplot_kw=dict(polar=True))
+        ax.plot(angles, company_values, linewidth=2, label=company.get("company_name", company_id))
+        ax.fill(angles, company_values, alpha=0.25)
+        ax.plot(angles, peer_avg, linewidth=2, linestyle="dashed", color="red", label=f"{peer_group_name} Avg")
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(metrics)
+        ax.set_title(f"Radar Chart: {company.get('company_name', company_id)} vs {peer_group_name} Avg")
+        plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1))
+
+    # Case 2: No peer group → single-metric chart vs Nifty 100 average
+    else:
+        fig, ax = plt.subplots(figsize=(6,4))
+        for m in metrics:
+            company_val = company[m]
+            nifty_val = nifty_avg_df.loc[m, "avg_value"] if m in nifty_avg_df.index else None
+            if nifty_val is not None:
+                ax.bar([f"{company_id}-{m}", f"Nifty100-{m}"], [company_val, nifty_val], color=["blue","red"])
+                ax.set_title(f"{company.get('company_name', company_id)} vs Nifty 100 ({m})")
+                break  # show one metric only
+
+    # Export PNG
+    filename = os.path.join(export_dir, f"{company['company_id']}_radar.png")
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Chart saved: {filename}")
+
+import pandas as pd
+
+metrics = ["ROE", "ROCE", "Net_Profit_Margin", "DE", 
+           "FCF", "PAT_CAGR_5yr", "Revenue_CAGR_5yr", "Composite_Score"]
+
+# Filter Nifty 100 companies (assuming peer_group == "Nifty100")
+nifty_df = df[df["peer_group"] == "Nifty100"]
+
+# Compute averages
+nifty_avg_df = pd.DataFrame({
+    "avg_value": [nifty_df[m].mean() for m in metrics]
+}, index=metrics)
+
+print(nifty_avg_df)
+
+
+o/p:                   avg_value
+ROE                      NaN
+ROCE                     NaN
+Net_Profit_Margin        NaN
+DE                       NaN
+FCF                      NaN
+PAT_CAGR_5yr             NaN
+Revenue_CAGR_5yr         NaN
+Composite_Score          NaN
+
+plot_company_vs_peer_or_nifty(df, company_id="C999", nifty_avg_df=nifty_avg_df)
+
+No data found for company_id=C999
+
+print(df["company_id"].unique())
+
+<ArrowStringArray>
+['IT001', 'IT002', 'IT003', 'IT004', 'IT005', 'PH001', 'PH002', 'PH003',
+ 'PH004', 'PH005', 'BA001', 'BA002', 'BA003', 'BA004', 'BA005', 'FM001',
+ 'FM002', 'FM003', 'FM004', 'FM005', 'EN001', 'EN002', 'EN003', 'EN004',
+ 'EN005', 'AU001', 'AU002', 'AU003', 'AU004', 'AU005', 'TE001', 'TE002',
+ 'TE003', 'TE004', 'TE005', 'IN001', 'IN002', 'IN003', 'IN004', 'IN005',
+ 'RE001', 'RE002', 'RE003', 'RE004', 'RE005', 'ME001', 'ME002', 'ME003',
+ 'ME004', 'ME005', 'CH001', 'CH002', 'CH003', 'CH004', 'CH005']
+Length: 55, dtype: str
+
+metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+           "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+# Filter Nifty 100 companies
+nifty_df = df[df["peer_group"] == "Nifty100"]
+
+# Compute averages
+import pandas as pd
+nifty_avg_df = pd.DataFrame({
+    "avg_value": [nifty_df[m].mean() for m in metrics]
+}, index=metrics)
+
+
+plot_company_vs_peer_or_nifty(df, company_id="ACTUAL_ID_FROM_DF", nifty_avg_df=nifty_avg_df)
+
+
+o/p: No data found for company_id=ACTUAL_ID_FROM_DF
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_company_vs_peer_or_nifty(df, company_id, nifty_avg_df, export_dir="reports/radar_charts"):
+    """
+    Export radar chart:
+    - If company has peer group → company polygon (filled) vs peer group average (dashed).
+    - If no peer group → company polygon (filled) vs Nifty 100 average (dashed).
+    """
+
+    metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+               "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+    os.makedirs(export_dir, exist_ok=True)
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company.get("peer_group")
+
+    # Normalize helper
+    def normalize(values):
+        values = np.array(values, dtype=float)
+        return 100 * (values - values.min()) / (values.max() - values.min() + 1e-9)
+
+    # Case 1: Company has peer group
+    if pd.notna(peer_group_name) and peer_group_name != "No peer group assigned":
+        group_df = df[df["peer_group"] == peer_group_name]
+        if group_df.empty:
+            print(f"No data found for peer group={peer_group_name}")
+            return
+
+        # Normalize group metrics
+        norm_df = group_df.copy()
+        for m in metrics:
+            norm_df[m] = normalize(norm_df[m])
+
+        # Company normalized values
+        company_values = []
+        for m in metrics:
+            col = norm_df[m]
+            company_values.append(100 * (company[m] - col.min()) / (col.max() - col.min() + 1e-9))
+
+        # Peer group average
+        peer_avg = norm_df[metrics].mean().tolist()
+
+        label_ref = f"{peer_group_name} Avg"
+
+    # Case 2: No peer group → compare against Nifty 100 averages
+    else:
+        company_values = [company[m] for m in metrics]
+        peer_avg = nifty_avg_df.loc[metrics, "avg_value"].tolist()
+
+        # Normalize both sets together
+        combined = np.array(company_values + peer_avg, dtype=float)
+        min_val, max_val = combined.min(), combined.max()
+        company_values = [(val - min_val)/(max_val-min_val+1e-9)*100 for val in company_values]
+        peer_avg = [(val - min_val)/(max_val-min_val+1e-9)*100 for val in peer_avg]
+
+        label_ref = "Nifty 100 Avg"
+
+    # Close polygons
+    company_values += company_values[:1]
+    peer_avg += peer_avg[:1]
+    angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
+    angles += angles[:1]
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(7,7), subplot_kw=dict(polar=True))
+    ax.plot(angles, company_values, linewidth=2, label=company.get("company_name", company_id))
+    ax.fill(angles, company_values, alpha=0.25)
+    ax.plot(angles, peer_avg, linewidth=2, linestyle="dashed", color="red", label=label_ref)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metrics)
+    ax.set_title(f"Radar Chart: {company.get('company_name', company_id)} vs {label_ref}")
+    plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1))
+
+    # Export PNG
+    filename = os.path.join(export_dir, f"{company['company_id']}_radar.png")
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Chart saved: {filename}")
+
+
+# Build Nifty 100 averages once
+metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+           "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+nifty_df = df[df["peer_group"] == "Nifty100"]
+nifty_avg_df = pd.DataFrame({"avg_value":[nifty_df[m].mean() for m in metrics]}, index=metrics)
+
+# Export chart for a company with peer group
+plot_company_vs_peer_or_nifty(df, company_id="VALID_ID", nifty_avg_df=nifty_avg_df)
+
+# Export chart for a company with no peer group
+plot_company_vs_peer_or_nifty(df, company_id="UNGROUPED_ID", nifty_avg_df=nifty_avg_df)
+
+o/p:
+No data found for company_id=VALID_ID
+No data found for company_id=UNGROUPED_ID
+
+def export_all_company_charts(df, nifty_avg_df, export_dir="reports/radar_charts"):
+    """
+    Export radar charts for all companies in df.
+    - If peer group exists → compare vs peer group average
+    - If no peer group → compare vs Nifty 100 average
+    """
+
+    company_ids = df["company_id"].unique()
+    if len(company_ids) == 0:
+        print("No companies found in DataFrame.")
+        return
+
+    for cid in company_ids:
+        plot_company_vs_peer_or_nifty(df, company_id=cid, nifty_avg_df=nifty_avg_df, export_dir=export_dir)
+
+
+# Build Nifty 100 averages once
+metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+           "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+nifty_df = df[df["peer_group"] == "Nifty100"]
+nifty_avg_df = pd.DataFrame({"avg_value":[nifty_df[m].mean() for m in metrics]}, index=metrics)
+
+# Export charts for all companies
+export_all_company_charts(df, nifty_avg_df)
+
+o/p:Chart saved: reports/radar_charts\IT001_radar.png
+Chart saved: reports/radar_charts\IT002_radar.png
+Chart saved: reports/radar_charts\IT003_radar.png
+Chart saved: reports/radar_charts\IT004_radar.png
+Chart saved: reports/radar_charts\IT005_radar.png
+Chart saved: reports/radar_charts\PH001_radar.png
+Chart saved: reports/radar_charts\PH002_radar.png
+Chart saved: reports/radar_charts\PH003_radar.png
+Chart saved: reports/radar_charts\PH004_radar.png
+Chart saved: reports/radar_charts\PH005_radar.png
+Chart saved: reports/radar_charts\BA001_radar.png
+Chart saved: reports/radar_charts\BA002_radar.png
+Chart saved: reports/radar_charts\BA003_radar.png
+Chart saved: reports/radar_charts\BA004_radar.png
+Chart saved: reports/radar_charts\BA005_radar.png
+Chart saved: reports/radar_charts\FM001_radar.png
+Chart saved: reports/radar_charts\FM002_radar.png
+Chart saved: reports/radar_charts\FM003_radar.png
+Chart saved: reports/radar_charts\FM004_radar.png
+Chart saved: reports/radar_charts\FM005_radar.png
+Chart saved: reports/radar_charts\EN001_radar.png
+Chart saved: reports/radar_charts\EN002_radar.png
+Chart saved: reports/radar_charts\EN003_radar.png
+Chart saved: reports/radar_charts\EN004_radar.png
+Chart saved: reports/radar_charts\EN005_radar.png
+Chart saved: reports/radar_charts\AU001_radar.png
+Chart saved: reports/radar_charts\AU002_radar.png
+Chart saved: reports/radar_charts\AU003_radar.png
+Chart saved: reports/radar_charts\AU004_radar.png
+Chart saved: reports/radar_charts\AU005_radar.png
+Chart saved: reports/radar_charts\TE001_radar.png
+Chart saved: reports/radar_charts\TE002_radar.png
+Chart saved: reports/radar_charts\TE003_radar.png
+Chart saved: reports/radar_charts\TE004_radar.png
+Chart saved: reports/radar_charts\TE005_radar.png
+Chart saved: reports/radar_charts\IN001_radar.png
+Chart saved: reports/radar_charts\IN002_radar.png
+Chart saved: reports/radar_charts\IN003_radar.png
+Chart saved: reports/radar_charts\IN004_radar.png
+Chart saved: reports/radar_charts\IN005_radar.png
+Chart saved: reports/radar_charts\RE001_radar.png
+Chart saved: reports/radar_charts\RE002_radar.png
+Chart saved: reports/radar_charts\RE003_radar.png
+Chart saved: reports/radar_charts\RE004_radar.png
+Chart saved: reports/radar_charts\RE005_radar.png
+Chart saved: reports/radar_charts\ME001_radar.png
+Chart saved: reports/radar_charts\ME002_radar.png
+Chart saved: reports/radar_charts\ME003_radar.png
+Chart saved: reports/radar_charts\ME004_radar.png
+Chart saved: reports/radar_charts\ME005_radar.png
+Chart saved: reports/radar_charts\CH001_radar.png
+Chart saved: reports/radar_charts\CH002_radar.png
+Chart saved: reports/radar_charts\CH003_radar.png
+Chart saved: reports/radar_charts\CH004_radar.png
+Chart saved: reports/radar_charts\CH005_radar.png
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_company_vs_peer_or_nifty(df, company_id, nifty_avg_df, export_dir="reports/radar_charts"):
+    metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+               "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company.get("peer_group")
+
+    # Decide reference: peer group avg or Nifty 100 avg
+    if pd.notna(peer_group_name) and peer_group_name != "No peer group assigned":
+        group_df = df[df["peer_group"] == peer_group_name]
+        ref_values = group_df[metrics].mean().tolist()
+        label_ref = f"{peer_group_name} Avg"
+    else:
+        ref_values = nifty_avg_df.loc[metrics, "avg_value"].tolist()
+        label_ref = "Nifty 100 Avg"
+
+    company_values = [company[m] for m in metrics]
+
+    # Normalize both sets together
+    combined = np.array(company_values + ref_values, dtype=float)
+    min_val, max_val = combined.min(), combined.max()
+    company_values = [(val - min_val)/(max_val-min_val+1e-9)*100 for val in company_values]
+    ref_values = [(val - min_val)/(max_val-min_val+1e-9)*100 for val in ref_values]
+
+    # Close polygons
+    company_values += company_values[:1]
+    ref_values += ref_values[:1]
+    angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
+    angles += angles[:1]
+
+    # Plot with larger fonts
+    fig, ax = plt.subplots(figsize=(8,8), subplot_kw=dict(polar=True))
+    ax.plot(angles, company_values, linewidth=2, label=company.get("company_name", company_id))
+    ax.fill(angles, company_values, alpha=0.25)
+    ax.plot(angles, ref_values, linewidth=2, linestyle="dashed", color="red", label=label_ref)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metrics, fontsize=12)   # readable font size
+    ax.set_title(f"Radar Chart: {company.get('company_name', company_id)} vs {label_ref}", fontsize=14)
+    plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1), fontsize=12)
+
+    # Export PNG
+    import os
+    os.makedirs(export_dir, exist_ok=True)
+    filename = os.path.join(export_dir, f"{company['company_id']}_radar.png")
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Chart saved: {filename}")
+
+import plotly.graph_objects as go
+
+def plot_company_vs_peer_or_nifty_plotly(df, company_id, nifty_avg_df):
+    metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+               "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company.get("peer_group")
+
+    if pd.notna(peer_group_name) and peer_group_name != "No peer group assigned":
+        group_df = df[df["peer_group"] == peer_group_name]
+        ref_values = group_df[metrics].mean().tolist()
+        label_ref = f"{peer_group_name} Avg"
+    else:
+        ref_values = nifty_avg_df.loc[metrics, "avg_value"].tolist()
+        label_ref = "Nifty 100 Avg"
+
+    company_values = [company[m] for m in metrics]
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatterpolar(
+        r=company_values,
+        theta=metrics,
+        fill='toself',
+        name=company.get("company_name", company_id),
+        line=dict(color="blue", width=3)
+    ))
+
+    fig.add_trace(go.Scatterpolar(
+        r=ref_values,
+        theta=metrics,
+        name=label_ref,
+        line=dict(color="red", width=3, dash="dash")
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, max(company_values+ref_values)], tickfont=dict(size=12))
+        ),
+        showlegend=True,
+        legend=dict(font=dict(size=12)),
+        title=dict(text=f"Radar Chart: {company.get('company_name', company_id)} vs {label_ref}", font=dict(size=16))
+    )
+
+    fig.show()
+
+
+import plotly.graph_objects as go
+
+def plot_company_vs_peer_or_nifty_plotly(df, company_id, nifty_avg_df):
+    metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+               "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company.get("peer_group")
+
+    if pd.notna(peer_group_name) and peer_group_name != "No peer group assigned":
+        group_df = df[df["peer_group"] == peer_group_name]
+        ref_values = group_df[metrics].mean().tolist()
+        label_ref = f"{peer_group_name} Avg"
+    else:
+        ref_values = nifty_avg_df.loc[metrics, "avg_value"].tolist()
+        label_ref = "Nifty 100 Avg"
+
+    company_values = [company[m] for m in metrics]
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatterpolar(
+        r=company_values,
+        theta=metrics,
+        fill='toself',
+        name=company.get("company_name", company_id),
+        line=dict(color="blue", width=3)
+    ))
+
+    fig.add_trace(go.Scatterpolar(
+        r=ref_values,
+        theta=metrics,
+        name=label_ref,
+        line=dict(color="red", width=3, dash="dash")
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, max(company_values+ref_values)], tickfont=dict(size=12))
+        ),
+        showlegend=True,
+        legend=dict(font=dict(size=12)),
+        title=dict(text=f"Radar Chart: {company.get('company_name', company_id)} vs {label_ref}", font=dict(size=16))
+    )
+
+    fig.show()
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def export_company_chart_matplotlib(df, company_id, nifty_avg_df, export_dir="reports/radar_charts"):
+    metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+               "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+    os.makedirs(export_dir, exist_ok=True)
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company.get("peer_group")
+
+    # Reference values
+    if pd.notna(peer_group_name) and peer_group_name != "No peer group assigned":
+        group_df = df[df["peer_group"] == peer_group_name]
+        ref_values = group_df[metrics].mean().tolist()
+        label_ref = f"{peer_group_name} Avg"
+    else:
+        ref_values = nifty_avg_df.loc[metrics, "avg_value"].tolist()
+        label_ref = "Nifty 100 Avg"
+
+    company_values = [company[m] for m in metrics]
+
+    # Normalize together
+    combined = np.array(company_values + ref_values, dtype=float)
+    min_val, max_val = combined.min(), combined.max()
+    company_values = [(val - min_val)/(max_val-min_val+1e-9)*100 for val in company_values]
+    ref_values = [(val - min_val)/(max_val-min_val+1e-9)*100 for val in ref_values]
+
+    # Close polygons
+    company_values += company_values[:1]
+    ref_values += ref_values[:1]
+    angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
+    angles += angles[:1]
+
+    fig, ax = plt.subplots(figsize=(8,8), subplot_kw=dict(polar=True))
+    ax.plot(angles, company_values, linewidth=2, label=company.get("company_name", company_id))
+    ax.fill(angles, company_values, alpha=0.25)
+    ax.plot(angles, ref_values, linewidth=2, linestyle="dashed", color="red", label=label_ref)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(metrics, fontsize=12)
+    ax.set_title(f"Radar Chart: {company.get('company_name', company_id)} vs {label_ref}", fontsize=14)
+    plt.legend(loc="upper right", bbox_to_anchor=(1.1, 1.1), fontsize=12)
+
+    filename = os.path.join(export_dir, f"{company['company_id']}_radar.png")
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"PNG saved: {filename}")
+
+import plotly.graph_objects as go
+
+def export_company_chart_plotly(df, company_id, nifty_avg_df, export_dir="reports/radar_charts"):
+    metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+               "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+    os.makedirs(export_dir, exist_ok=True)
+
+    company_rows = df[df["company_id"] == company_id]
+    if company_rows.empty:
+        print(f"No data found for company_id={company_id}")
+        return
+    company = company_rows.iloc[0]
+    peer_group_name = company.get("peer_group")
+
+    if pd.notna(peer_group_name) and peer_group_name != "No peer group assigned":
+        group_df = df[df["peer_group"] == peer_group_name]
+        ref_values = group_df[metrics].mean().tolist()
+        label_ref = f"{peer_group_name} Avg"
+    else:
+        ref_values = nifty_avg_df.loc[metrics, "avg_value"].tolist()
+        label_ref = "Nifty 100 Avg"
+
+    company_values = [company[m] for m in metrics]
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatterpolar(
+        r=company_values,
+        theta=metrics,
+        fill='toself',
+        name=company.get("company_name", company_id),
+        line=dict(color="blue", width=3)
+    ))
+
+    fig.add_trace(go.Scatterpolar(
+        r=ref_values,
+        theta=metrics,
+        name=label_ref,
+        line=dict(color="red", width=3, dash="dash")
+    ))
+
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, tickfont=dict(size=12))),
+        showlegend=True,
+        legend=dict(font=dict(size=12)),
+        title=dict(text=f"Radar Chart: {company.get('company_name', company_id)} vs {label_ref}", font=dict(size=16))
+    )
+
+    filename = os.path.join(export_dir, f"{company['company_id']}_radar.html")
+    fig.write_html(filename)
+    print(f"Interactive HTML saved: {filename}")
+
+# Build Nifty 100 averages once
+metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+           "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+nifty_df = df[df["peer_group"] == "Nifty100"]
+nifty_avg_df = pd.DataFrame({"avg_value":[nifty_df[m].mean() for m in metrics]}, index=metrics)
+
+# Export static PNG
+export_company_chart_matplotlib(df, company_id="VALID_ID", nifty_avg_df=nifty_avg_df)
+
+# Export interactive HTML
+export_company_chart_plotly(df, company_id="VALID_ID", nifty_avg_df=nifty_avg_df)
+
+
+No data found for company_id=VALID_ID
+No data found for company_id=VALID_ID
+
+print(df["company_id"].unique())
+
+<ArrowStringArray>
+['IT001', 'IT002', 'IT003', 'IT004', 'IT005', 'PH001', 'PH002', 'PH003',
+ 'PH004', 'PH005', 'BA001', 'BA002', 'BA003', 'BA004', 'BA005', 'FM001',
+ 'FM002', 'FM003', 'FM004', 'FM005', 'EN001', 'EN002', 'EN003', 'EN004',
+ 'EN005', 'AU001', 'AU002', 'AU003', 'AU004', 'AU005', 'TE001', 'TE002',
+ 'TE003', 'TE004', 'TE005', 'IN001', 'IN002', 'IN003', 'IN004', 'IN005',
+ 'RE001', 'RE002', 'RE003', 'RE004', 'RE005', 'ME001', 'ME002', 'ME003',
+ 'ME004', 'ME005', 'CH001', 'CH002', 'CH003', 'CH004', 'CH005']
+Length: 55, dtype: str
+
+metrics = ["ROE","ROCE","Net_Profit_Margin","DE",
+           "FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+nifty_df = df[df["peer_group"] == "Nifty100"]
+nifty_avg_df = pd.DataFrame({"avg_value":[nifty_df[m].mean() for m in metrics]}, index=metrics)
+
+
+def export_all_company_charts(df, nifty_avg_df, mode="matplotlib", export_dir="reports/radar_charts"):
+    """
+    Export radar charts for all companies.
+    mode = "matplotlib" → PNG
+    mode = "plotly" → interactive HTML
+    """
+
+    company_ids = df["company_id"].unique()
+    if len(company_ids) == 0:
+        print("No companies found in DataFrame.")
+        return
+
+    for cid in company_ids:
+        if mode == "matplotlib":
+            export_company_chart_matplotlib(df, company_id=cid, nifty_avg_df=nifty_avg_df, export_dir=export_dir)
+        elif mode == "plotly":
+            export_company_chart_plotly(df, company_id=cid, nifty_avg_df=nifty_avg_df, export_dir=export_dir)
+        else:
+            print(f"Unknown mode: {mode}")
+
+# Export all charts as PNGs
+export_all_company_charts(df, nifty_avg_df, mode="matplotlib")
+
+# Export all charts as interactive HTML
+export_all_company_charts(df, nifty_avg_df, mode="plotly")
+
+o/p:
+PNG saved: reports/radar_charts\IT001_radar.png
+PNG saved: reports/radar_charts\IT002_radar.png
+PNG saved: reports/radar_charts\IT003_radar.png
+PNG saved: reports/radar_charts\IT004_radar.png
+PNG saved: reports/radar_charts\IT005_radar.png
+PNG saved: reports/radar_charts\PH001_radar.png
+PNG saved: reports/radar_charts\PH002_radar.png
+PNG saved: reports/radar_charts\PH003_radar.png
+PNG saved: reports/radar_charts\PH004_radar.png
+PNG saved: reports/radar_charts\PH005_radar.png
+PNG saved: reports/radar_charts\BA001_radar.png
+PNG saved: reports/radar_charts\BA002_radar.png
+PNG saved: reports/radar_charts\BA003_radar.png
+PNG saved: reports/radar_charts\BA004_radar.png
+PNG saved: reports/radar_charts\BA005_radar.png
+PNG saved: reports/radar_charts\FM001_radar.png
+PNG saved: reports/radar_charts\FM002_radar.png
+PNG saved: reports/radar_charts\FM003_radar.png
+PNG saved: reports/radar_charts\FM004_radar.png
+PNG saved: reports/radar_charts\FM005_radar.png
+PNG saved: reports/radar_charts\EN001_radar.png
+PNG saved: reports/radar_charts\EN002_radar.png
+PNG saved: reports/radar_charts\EN003_radar.png
+PNG saved: reports/radar_charts\EN004_radar.png
+PNG saved: reports/radar_charts\EN005_radar.png
+PNG saved: reports/radar_charts\AU001_radar.png
+PNG saved: reports/radar_charts\AU002_radar.png
+PNG saved: reports/radar_charts\AU003_radar.png
+PNG saved: reports/radar_charts\AU004_radar.png
+PNG saved: reports/radar_charts\AU005_radar.png
+PNG saved: reports/radar_charts\TE001_radar.png
+PNG saved: reports/radar_charts\TE002_radar.png
+PNG saved: reports/radar_charts\TE003_radar.png
+PNG saved: reports/radar_charts\TE004_radar.png
+PNG saved: reports/radar_charts\TE005_radar.png
+PNG saved: reports/radar_charts\IN001_radar.png
+PNG saved: reports/radar_charts\IN002_radar.png
+PNG saved: reports/radar_charts\IN003_radar.png
+PNG saved: reports/radar_charts\IN004_radar.png
+PNG saved: reports/radar_charts\IN005_radar.png
+PNG saved: reports/radar_charts\RE001_radar.png
+PNG saved: reports/radar_charts\RE002_radar.png
+
+df = pd.read_excel(r"C:\Users\srisa\Desktop\Week_2 Stock Market\project_root\companies_data.xlsx")
+
+import pandas as pd
+
+data = {
+    "company_id": ["C001","C002","C003","C004"],
+    "company_name": ["Alpha","Beta","Gamma","Delta"],
+    "peer_group": ["IT","IT","Pharma","Banking"],
+    "ROE": [15,18,12,10],
+    "ROCE": [20,22,15,14],
+    "Net_Profit_Margin": [12,14,10,8],
+    "DE": [0.8,0.6,1.2,1.5],
+    "FCF": [200,250,180,160],
+    "PAT_CAGR_5yr": [10,12,8,7],
+    "Revenue_CAGR_5yr": [9,11,7,6],
+    "Composite_Score": [70,75,65,60]
+}
+
+df = pd.DataFrame(data)
+
+
+export_peer_comparison(df, output_path="output/peer_comparison.xlsx")
+
+o/p:
+Peer comparison report saved: output/peer_comparison.xlsx
+
+import pandas as pd
+import os
+
+# Define peer groups
+peer_groups = ["IT","Pharma","Banking","FMCG","Energy",
+               "Automobile","Telecom","Cement","Steel","RealEstate","Nifty100"]
+
+# Example empty DataFrame with required columns
+columns = ["company_id","company_name","peer_group",
+           "ROE","ROCE","Net_Profit_Margin","DE","FCF",
+           "PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+# Ensure output directory exists
+os.makedirs("input", exist_ok=True)
+
+# Create Excel writer
+with pd.ExcelWriter("input/companies_data.xlsx", engine="xlsxwriter") as writer:
+    for group in peer_groups:
+        # Create a sample sheet with placeholder rows
+        sample_data = pd.DataFrame([
+            {"company_id":f"{group[:2]}01","company_name":f"{group}Co1","peer_group":group,
+             "ROE":None,"ROCE":None,"Net_Profit_Margin":None,"DE":None,"FCF":None,
+             "PAT_CAGR_5yr":None,"Revenue_CAGR_5yr":None,"Composite_Score":None},
+            {"company_id":f"{group[:2]}02","company_name":f"{group}Co2","peer_group":group,
+             "ROE":None,"ROCE":None,"Net_Profit_Margin":None,"DE":None,"FCF":None,
+             "PAT_CAGR_5yr":None,"Revenue_CAGR_5yr":None,"Composite_Score":None}
+        ], columns=columns)
+
+        sample_data.to_excel(writer, sheet_name=group, index=False)
+
+print("Starter Excel template created at input/companies_data.xlsx")
+
+o/p:
+
+
+
+
+
+
+
+import pandas as pd
+import os
+
+# Define peer groups
+peer_groups = ["IT","Pharma","Banking","FMCG","Energy",
+               "Automobile","Telecom","Cement","Steel","RealEstate","Nifty100"]
+
+# Example empty DataFrame with required columns
+columns = ["company_id","company_name","peer_group",
+           "ROE","ROCE","Net_Profit_Margin","DE","FCF",
+           "PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score"]
+
+# Ensure output directory exists
+os.makedirs("input", exist_ok=True)
+
+# Create Excel writer
+with pd.ExcelWriter("input/companies_data.xlsx", engine="xlsxwriter") as writer:
+    for group in peer_groups:
+        # Create a sample sheet with placeholder rows
+        sample_data = pd.DataFrame([
+            {"company_id":f"{group[:2]}01","company_name":f"{group}Co1","peer_group":group,
+             "ROE":None,"ROCE":None,"Net_Profit_Margin":None,"DE":None,"FCF":None,
+             "PAT_CAGR_5yr":None,"Revenue_CAGR_5yr":None,"Composite_Score":None},
+            {"company_id":f"{group[:2]}02","company_name":f"{group}Co2","peer_group":group,
+             "ROE":None,"ROCE":None,"Net_Profit_Margin":None,"DE":None,"FCF":None,
+             "PAT_CAGR_5yr":None,"Revenue_CAGR_5yr":None,"Composite_Score":None}
+        ], columns=columns)
+
+        sample_data.to_excel(writer, sheet_name=group, index=False)
+
+print("Starter Excel template created at input/companies_data.xlsx")
+
+Starter Excel template created at input/companies_data.xlsx
+import pandas as pd
+import os
+
+def export_peer_comparison(df, output_path="output/peer_comparison.xlsx"):
+    """
+    Generate an Excel report with 11 sheets — one per peer group.
+    Each sheet contains company_id, company_name, 20 metrics, and percentile ranks.
+    """
+
+    # Define your 20 metrics
+    metrics = [
+        "ROE","ROCE","Net_Profit_Margin","DE","FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score",
+        "EPS","PE","PB","Dividend_Yield","ICR","CFO_PAT","FCF_CAGR","Sales_CAGR_5yr","Profit_CAGR_5yr",
+        "Market_Cap","EV_EBITDA","Debt_Service_Coverage"
+    ]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        for group, group_df in df.groupby("peer_group"):
+            ranked_df = group_df.copy()
+
+            # Compute percentile ranks for each metric
+            for m in metrics:
+                if m in ranked_df.columns:
+                    # For DE (Debt/Equity), lower is better → reverse rank
+                    if m in ["DE","Debt_Service_Coverage"]:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True, ascending=False) * 100
+                    else:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True) * 100
+
+            ranked_df.to_excel(writer, sheet_name=str(group), index=False)
+
+    print(f"Peer comparison report saved: {output_path}")
+
+
+# Load your dataset
+df = pd.read_excel("input/companies_data.xlsx")
+
+# Generate the report
+export_peer_comparison(df, output_path="output/peer_comparison.xlsx")
+
+o/p:
+
+
+
+
+
+
+
+# Load your dataset
+df = pd.read_excel("input/companies_data.xlsx")
+
+# Generate the report
+export_peer_comparison(df, output_path="output/peer_comparison.xlsx")
+
+Peer comparison report saved: output/peer_comparison.xlsx
+
+import pandas as pd
+import os
+
+def export_peer_comparison(df, output_path="output/peer_comparison.xlsx"):
+    """
+    Generate an Excel report with 11 sheets — one per peer group.
+    Each sheet contains company_id, company_name, 20 metrics, and percentile ranks.
+    Colour-coded percentile rank cells:
+      - Green for >=75
+      - Yellow for 25–75
+      - Red for <=25
+    """
+
+    metrics = [
+        "ROE","ROCE","Net_Profit_Margin","DE","FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score",
+        "EPS","PE","PB","Dividend_Yield","ICR","CFO_PAT","FCF_CAGR","Sales_CAGR_5yr","Profit_CAGR_5yr",
+        "Market_Cap","EV_EBITDA","Debt_Service_Coverage"
+    ]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        for group, group_df in df.groupby("peer_group"):
+            ranked_df = group_df.copy()
+
+            # Compute percentile ranks
+            for m in metrics:
+                if m in ranked_df.columns:
+                    if m in ["DE","Debt_Service_Coverage"]:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True, ascending=False) * 100
+                    else:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True) * 100
+
+            # Write to sheet
+            ranked_df.to_excel(writer, sheet_name=str(group), index=False)
+
+            # Apply conditional formatting
+            workbook  = writer.book
+            worksheet = writer.sheets[str(group)]
+
+            green_fmt = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+            yellow_fmt = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C6500"})
+            red_fmt = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+
+            # Find percentile rank columns
+            for col_num, col_name in enumerate(ranked_df.columns):
+                if col_name.endswith("_PERCENT_RANK"):
+                    col_letter = chr(ord("A") + col_num)
+                    # Apply rules to entire column (rows 2 to len+1 because header is row 1)
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+    print(f"Peer comparison report saved: {output_path}")
+
+
+# Load your dataset
+df = pd.read_excel("input/companies_data.xlsx")
+
+# Generate the colour-coded report
+export_peer_comparison(df, output_path="output/peer_comparison.xlsx")
+
+o/p:
+Peer comparison report saved: output/peer_comparison.xlsx
+
+
+import pandas as pd
+import os
+
+def export_peer_comparison(df, output_path="output/peer_comparison.xlsx"):
+    """
+    Generate an Excel report with 11 sheets — one per peer group.
+    Each sheet contains company_id, company_name, 20 metrics, and percentile ranks.
+    Adds a summary sheet consolidating all companies.
+    Colour-coded percentile rank cells:
+      - Green for >=75
+      - Yellow for 25–75
+      - Red for <=25
+    """
+
+    metrics = [
+        "ROE","ROCE","Net_Profit_Margin","DE","FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score",
+        "EPS","PE","PB","Dividend_Yield","ICR","CFO_PAT","FCF_CAGR","Sales_CAGR_5yr","Profit_CAGR_5yr",
+        "Market_Cap","EV_EBITDA","Debt_Service_Coverage"
+    ]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    all_ranked = []
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        for group, group_df in df.groupby("peer_group"):
+            ranked_df = group_df.copy()
+
+            # Compute percentile ranks
+            for m in metrics:
+                if m in ranked_df.columns:
+                    if m in ["DE","Debt_Service_Coverage"]:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True, ascending=False) * 100
+                    else:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True) * 100
+
+            ranked_df.to_excel(writer, sheet_name=str(group), index=False)
+            all_ranked.append(ranked_df)
+
+            # Apply conditional formatting
+            workbook  = writer.book
+            worksheet = writer.sheets[str(group)]
+
+            green_fmt = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+            yellow_fmt = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C6500"})
+            red_fmt = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+
+            for col_num, col_name in enumerate(ranked_df.columns):
+                if col_name.endswith("_PERCENT_RANK"):
+                    col_letter = chr(ord("A") + col_num)
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+        # Build summary sheet
+        summary_df = pd.concat(all_ranked, ignore_index=True)
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+        # Apply conditional formatting to summary
+        worksheet = writer.sheets["Summary"]
+        for col_num, col_name in enumerate(summary_df.columns):
+            if col_name.endswith("_PERCENT_RANK"):
+                col_letter = chr(ord("A") + col_num)
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+    print(f"Peer comparison report saved: {output_path}")
+
+export_peer_comparison(df, output_path="output/peer_comparison_v2.xlsx")
+
+o/p:
+Peer comparison report saved: output/peer_comparison_v2.xlsx
+
+
+import pandas as pd
+import os
+
+def export_peer_comparison(df, output_path="output/peer_comparison.xlsx", benchmark_id="C001"):
+    """
+    Generate an Excel report with 11 sheets — one per peer group.
+    Each sheet contains company_id, company_name, 20 metrics, and percentile ranks.
+    Adds a summary sheet consolidating all companies.
+    Colour-coded percentile rank cells:
+      - Green for >=75
+      - Yellow for 25–75
+      - Red for <=25
+    Highlights benchmark company row with gold/amber background.
+    """
+
+    metrics = [
+        "ROE","ROCE","Net_Profit_Margin","DE","FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score",
+        "EPS","PE","PB","Dividend_Yield","ICR","CFO_PAT","FCF_CAGR","Sales_CAGR_5yr","Profit_CAGR_5yr",
+        "Market_Cap","EV_EBITDA","Debt_Service_Coverage"
+    ]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    all_ranked = []
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        # Define formats
+        green_fmt = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+        yellow_fmt = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C6500"})
+        red_fmt = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+        benchmark_fmt = workbook.add_format({"bg_color": "#FFD966"})  # gold/amber
+
+        for group, group_df in df.groupby("peer_group"):
+            ranked_df = group_df.copy()
+
+            # Compute percentile ranks
+            for m in metrics:
+                if m in ranked_df.columns:
+                    if m in ["DE","Debt_Service_Coverage"]:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True, ascending=False) * 100
+                    else:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True) * 100
+
+            ranked_df.to_excel(writer, sheet_name=str(group), index=False)
+            all_ranked.append(ranked_df)
+
+            worksheet = writer.sheets[str(group)]
+
+            # Apply percentile colour coding
+            for col_num, col_name in enumerate(ranked_df.columns):
+                if col_name.endswith("_PERCENT_RANK"):
+                    col_letter = chr(ord("A") + col_num)
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+            # Highlight benchmark row
+            for row_idx, cid in enumerate(ranked_df["company_id"], start=2):  # row 2 onwards
+                if cid == benchmark_id:
+                    worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+        # Build summary sheet
+        summary_df = pd.concat(all_ranked, ignore_index=True)
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        worksheet = writer.sheets["Summary"]
+
+        # Apply percentile colour coding to summary
+        for col_num, col_name in enumerate(summary_df.columns):
+            if col_name.endswith("_PERCENT_RANK"):
+                col_letter = chr(ord("A") + col_num)
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+        # Highlight benchmark row in summary
+        for row_idx, cid in enumerate(summary_df["company_id"], start=2):
+            if cid == benchmark_id:
+                worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+    print(f"Peer comparison report saved: {output_path}")
+
+df = pd.read_excel("input/companies_data.xlsx")
+export_peer_comparison(df, output_path="output/peer_comparison.xlsx", benchmark_id="C001")
+
+o/p:
+Peer comparison report saved: output/peer_comparison.xlsx
+import pandas as pd
+import os
+
+def export_peer_comparison(df, output_path="output/peer_comparison.xlsx", benchmark_id="C001"):
+    """
+    Generate an Excel report with 11 sheets — one per peer group.
+    Each sheet contains company_id, company_name, 20 metrics, and percentile ranks.
+    Adds a summary sheet consolidating all companies.
+    Colour-coded percentile rank cells:
+      - Green for >=75
+      - Yellow for 25–75
+      - Red for <=25
+    Highlights benchmark company row with gold/amber background.
+    Adds a summary row at the bottom showing peer group median for each metric.
+    """
+
+    metrics = [
+        "ROE","ROCE","Net_Profit_Margin","DE","FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score",
+        "EPS","PE","PB","Dividend_Yield","ICR","CFO_PAT","FCF_CAGR","Sales_CAGR_5yr","Profit_CAGR_5yr",
+        "Market_Cap","EV_EBITDA","Debt_Service_Coverage"
+    ]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    all_ranked = []
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        # Formats
+        green_fmt = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+        yellow_fmt = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C6500"})
+        red_fmt = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+        benchmark_fmt = workbook.add_format({"bg_color": "#FFD966"})  # gold/amber
+        median_fmt = workbook.add_format({"bold": True, "bg_color": "#D9E1F2"})  # light blue for median row
+
+        for group, group_df in df.groupby("peer_group"):
+            ranked_df = group_df.copy()
+
+            # Compute percentile ranks
+            for m in metrics:
+                if m in ranked_df.columns:
+                    if m in ["DE","Debt_Service_Coverage"]:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True, ascending=False) * 100
+                    else:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True) * 100
+
+            # Add median row
+            median_row = {"company_id":"", "company_name":"Peer Group Median", "peer_group":group}
+            for m in metrics:
+                if m in ranked_df.columns:
+                    median_row[m] = ranked_df[m].median()
+                    median_row[f"{m}_PERCENT_RANK"] = ranked_df[f"{m}_PERCENT_RANK"].median()
+            ranked_df = pd.concat([ranked_df, pd.DataFrame([median_row])], ignore_index=True)
+
+            ranked_df.to_excel(writer, sheet_name=str(group), index=False)
+            all_ranked.append(ranked_df)
+
+            worksheet = writer.sheets[str(group)]
+
+            # Apply percentile colour coding
+            for col_num, col_name in enumerate(ranked_df.columns):
+                if col_name.endswith("_PERCENT_RANK"):
+                    col_letter = chr(ord("A") + col_num)
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+            # Highlight benchmark row
+            for row_idx, cid in enumerate(ranked_df["company_id"], start=2):
+                if cid == benchmark_id:
+                    worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+            # Highlight median row
+            worksheet.set_row(len(ranked_df)+1-1, None, median_fmt)
+
+        # Build summary sheet
+        summary_df = pd.concat(all_ranked, ignore_index=True)
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        worksheet = writer.sheets["Summary"]
+
+        # Apply percentile colour coding to summary
+        for col_num, col_name in enumerate(summary_df.columns):
+            if col_name.endswith("_PERCENT_RANK"):
+                col_letter = chr(ord("A") + col_num)
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+        # Highlight benchmark row in summary
+        for row_idx, cid in enumerate(summary_df["company_id"], start=2):
+            if cid == benchmark_id:
+                worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+    print(f"Peer comparison report saved: {output_path}")
+
+import pandas as pd
+import os
+
+def export_peer_comparison(df, output_path="output/peer_comparison.xlsx", benchmark_id="C001"):
+    """
+    Generate an Excel report with 11 sheets — one per peer group.
+    Each sheet contains company_id, company_name, 20 metrics, and percentile ranks.
+    Adds a summary sheet consolidating all companies.
+    Colour-coded percentile rank cells:
+      - Green for >=75
+      - Yellow for 25–75
+      - Red for <=25
+    Highlights benchmark company row with gold/amber background.
+    Adds a summary row at the bottom showing peer group median for each metric.
+    Adds a grand summary row at the bottom of the Summary sheet showing overall median.
+    """
+
+    metrics = [
+        "ROE","ROCE","Net_Profit_Margin","DE","FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score",
+        "EPS","PE","PB","Dividend_Yield","ICR","CFO_PAT","FCF_CAGR","Sales_CAGR_5yr","Profit_CAGR_5yr",
+        "Market_Cap","EV_EBITDA","Debt_Service_Coverage"
+    ]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    all_ranked = []
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        # Formats
+        green_fmt = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+        yellow_fmt = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C6500"})
+        red_fmt = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+        benchmark_fmt = workbook.add_format({"bg_color": "#FFD966"})  # gold/amber
+        median_fmt = workbook.add_format({"bold": True, "bg_color": "#D9E1F2"})  # light blue
+
+        for group, group_df in df.groupby("peer_group"):
+            ranked_df = group_df.copy()
+
+            # Compute percentile ranks
+            for m in metrics:
+                if m in ranked_df.columns:
+                    if m in ["DE","Debt_Service_Coverage"]:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True, ascending=False) * 100
+                    else:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True) * 100
+
+            # Add median row
+            median_row = {"company_id":"", "company_name":"Peer Group Median", "peer_group":group}
+            for m in metrics:
+                if m in ranked_df.columns:
+                    median_row[m] = ranked_df[m].median()
+                    median_row[f"{m}_PERCENT_RANK"] = ranked_df[f"{m}_PERCENT_RANK"].median()
+            ranked_df = pd.concat([ranked_df, pd.DataFrame([median_row])], ignore_index=True)
+
+            ranked_df.to_excel(writer, sheet_name=str(group), index=False)
+            all_ranked.append(ranked_df)
+
+            worksheet = writer.sheets[str(group)]
+
+            # Apply percentile colour coding
+            for col_num, col_name in enumerate(ranked_df.columns):
+                if col_name.endswith("_PERCENT_RANK"):
+                    col_letter = chr(ord("A") + col_num)
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+            # Highlight benchmark row
+            for row_idx, cid in enumerate(ranked_df["company_id"], start=2):
+                if cid == benchmark_id:
+                    worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+            # Highlight median row
+            worksheet.set_row(len(ranked_df), None, median_fmt)
+
+        # Build summary sheet
+        summary_df = pd.concat(all_ranked, ignore_index=True)
+
+        # Add grand summary row
+        grand_row = {"company_id":"", "company_name":"Grand Median", "peer_group":"All"}
+        for m in metrics:
+            if m in summary_df.columns:
+                grand_row[m] = summary_df[m].median()
+                grand_row[f"{m}_PERCENT_RANK"] = summary_df[f"{m}_PERCENT_RANK"].median()
+        summary_df = pd.concat([summary_df, pd.DataFrame([grand_row])], ignore_index=True)
+
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        worksheet = writer.sheets["Summary"]
+
+        # Apply percentile colour coding to summary
+        for col_num, col_name in enumerate(summary_df.columns):
+            if col_name.endswith("_PERCENT_RANK"):
+                col_letter = chr(ord("A") + col_num)
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+        # Highlight benchmark row in summary
+        for row_idx, cid in enumerate(summary_df["company_id"], start=2):
+            if cid == benchmark_id:
+                worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+        # Highlight grand median row
+        worksheet.set_row(len(summary_df), None, median_fmt)
+
+    print(f"Peer comparison report saved: {output_path}")
+
+import pandas as pd
+import os
+
+def export_peer_comparison(df, output_path="output/peer_comparison.xlsx", benchmark_id="C001"):
+    """
+    Generate an Excel report with 11 sheets — one per peer group.
+    Each sheet contains company_id, company_name, 20 metrics, and percentile ranks.
+    Adds a summary sheet consolidating all companies.
+    Colour-coded percentile rank cells:
+      - Green for >=75
+      - Yellow for 25–75
+      - Red for <=25
+    Highlights benchmark company row with gold/amber background.
+    Adds a summary row at the bottom showing peer group median for each metric.
+    Adds a grand summary row at the bottom of the Summary sheet showing overall median.
+    """
+
+    metrics = [
+        "ROE","ROCE","Net_Profit_Margin","DE","FCF","PAT_CAGR_5yr","Revenue_CAGR_5yr","Composite_Score",
+        "EPS","PE","PB","Dividend_Yield","ICR","CFO_PAT","FCF_CAGR","Sales_CAGR_5yr","Profit_CAGR_5yr",
+        "Market_Cap","EV_EBITDA","Debt_Service_Coverage"
+    ]
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    all_ranked = []
+
+    with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        # Formats
+        green_fmt = workbook.add_format({"bg_color": "#C6EFCE", "font_color": "#006100"})
+        yellow_fmt = workbook.add_format({"bg_color": "#FFEB9C", "font_color": "#9C6500"})
+        red_fmt = workbook.add_format({"bg_color": "#FFC7CE", "font_color": "#9C0006"})
+        benchmark_fmt = workbook.add_format({"bg_color": "#FFD966"})  # gold/amber
+        median_fmt = workbook.add_format({"bold": True, "bg_color": "#D9E1F2"})  # light blue
+
+        for group, group_df in df.groupby("peer_group"):
+            ranked_df = group_df.copy()
+
+            # Compute percentile ranks
+            for m in metrics:
+                if m in ranked_df.columns:
+                    if m in ["DE","Debt_Service_Coverage"]:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True, ascending=False) * 100
+                    else:
+                        ranked_df[f"{m}_PERCENT_RANK"] = ranked_df[m].rank(pct=True) * 100
+
+            # Add median row
+            median_row = {"company_id":"", "company_name":"Peer Group Median", "peer_group":group}
+            for m in metrics:
+                if m in ranked_df.columns:
+                    median_row[m] = ranked_df[m].median()
+                    median_row[f"{m}_PERCENT_RANK"] = ranked_df[f"{m}_PERCENT_RANK"].median()
+            ranked_df = pd.concat([ranked_df, pd.DataFrame([median_row])], ignore_index=True)
+
+            ranked_df.to_excel(writer, sheet_name=str(group), index=False)
+            all_ranked.append(ranked_df)
+
+            worksheet = writer.sheets[str(group)]
+
+            # Apply percentile colour coding
+            for col_num, col_name in enumerate(ranked_df.columns):
+                if col_name.endswith("_PERCENT_RANK"):
+                    col_letter = chr(ord("A") + col_num)
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                    worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(ranked_df)+1}", 
+                                                 {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+            # Highlight benchmark row
+            for row_idx, cid in enumerate(ranked_df["company_id"], start=2):
+                if cid == benchmark_id:
+                    worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+            # Highlight median row
+            worksheet.set_row(len(ranked_df), None, median_fmt)
+
+        # Build summary sheet
+        summary_df = pd.concat(all_ranked, ignore_index=True)
+
+        # Add grand summary row
+        grand_row = {"company_id":"", "company_name":"Grand Median", "peer_group":"All"}
+        for m in metrics:
+            if m in summary_df.columns:
+                grand_row[m] = summary_df[m].median()
+                grand_row[f"{m}_PERCENT_RANK"] = summary_df[f"{m}_PERCENT_RANK"].median()
+        summary_df = pd.concat([summary_df, pd.DataFrame([grand_row])], ignore_index=True)
+
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        worksheet = writer.sheets["Summary"]
+
+        # Apply percentile colour coding to summary
+        for col_num, col_name in enumerate(summary_df.columns):
+            if col_name.endswith("_PERCENT_RANK"):
+                col_letter = chr(ord("A") + col_num)
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": ">=", "value": 75, "format": green_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "between", "minimum": 25, "maximum": 75, "format": yellow_fmt})
+                worksheet.conditional_format(f"{col_letter}2:{col_letter}{len(summary_df)+1}", 
+                                             {"type": "cell", "criteria": "<=", "value": 25, "format": red_fmt})
+
+        # Highlight benchmark row in summary
+        for row_idx, cid in enumerate(summary_df["company_id"], start=2):
+            if cid == benchmark_id:
+                worksheet.set_row(row_idx-1, None, benchmark_fmt)
+
+        # Highlight grand median row
+        worksheet.set_row(len(summary_df), None, median_fmt)
+
+    print(f"Peer comparison report saved: {output_path}")
+
+import os
+
+print(os.listdir(r"C:\Users\srisa\Desktop\Week_2 Stock Market\project_root"))
+
+['.pytest_cache', 'companies_data.xlsx', 'FINANCIAL RATIO ENGINE.txt', 'FINANCIAL RATIO ENGINE1.txt', 'financial_ratios.csv', 'input', 'main.py', 'output', 'peer.db', 'peer_groups.xlsx', 'peer_rankings.xlsx', 'quality_compounder_verification_top5.xlsx', 'ratio_edge_cases.log', 'reports', 'run_tests.bat', 'screener_output.xlsx', 'SPRINT_3', 'Sqllite_ peer.txt', 'src', 'tests', 'test_results.txt', 'test_results_2026-08-31.txt', 'top5.py', '~$quality_compounder_verification_top5.xlsx']
+
+df = pd.read_excel(r"C:\Users\srisa\Desktop\Week_2 Stock Market\project_root\screener_output.xlsx")
+print(df.columns.tolist())
+
+
+['Preset', 'Companies', 'Avg Composite Score', 'Avg Sector Score']
+
+print(df["peer_group"].unique())
+
+<ArrowStringArray>
+[            'IT',         'Pharma',        'Banking',           'FMCG',
+         'Energy',     'Automobile',        'Telecom', 'Infrastructure',
+         'Retail',         'Metals',      'Chemicals']
+Length: 11, dtype: str
+
+it_services = df[df["peer_group"].str.contains("IT", case=False, na=False)]
+print(it_services.head())
+
+o/p:
+ company_id company_name peer_group        ROE       ROCE  Net_Profit_Margin  \
+0      IT001        ITCo1         IT  16.864431  18.384537           6.853302   
+1      IT002        ITCo2         IT  15.428914   5.954614          13.313735   
+2      IT003        ITCo3         IT  16.435447  12.761695           9.304274   
+3      IT004        ITCo4         IT  17.626151  13.875457          12.026338   
+4      IT005        ITCo5         IT  17.013021  16.153909          10.062661   
+
+         DE         FCF  PAT_CAGR_5yr  Revenue_CAGR_5yr  EPS_CAGR_5yr  \
+0  0.210557   85.926525     16.918674          5.520054     13.742103   
+1  0.938570   67.239950      6.407859         18.644402     15.038004   
+2  0.543725  115.189394     16.608195         14.028851     18.387849   
+3  0.432407  126.854567      6.563372         10.767670     12.315006   
+4  0.987746   60.639832      8.815874         10.427796     12.087400   
+
+   Interest_Coverage  Asset_Turnover  
+0           9.958938        1.783544  
+1           8.463581        1.818468  
+2           4.990420        1.410634  
+3           6.870018        1.925797  
+4           1.410839        0.710036  
+
+import pandas as pd
+
+df = pd.read_excel("peer_groups.xlsx")
+
+# Calculate ROE percentile rank within each peer group
+df["ROE_PERCENT_RANK"] = df.groupby("peer_group")["ROE"].rank(pct=True)
+
+# Now filter IT Services
+it_services = df[df["peer_group"].str.contains("IT Services", case=False, na=False)]
+
+if it_services.empty:
+    print("No companies found in IT Services peer group")
+else:
+    max_roe_company = it_services.loc[it_services["ROE"].idxmax()]
+    max_rank_company = it_services.loc[it_services["ROE_PERCENT_RANK"].idxmax()]
+
+    print("Highest ROE company:", max_roe_company["company_name"], max_roe_company["ROE"])
+    print("Highest ROE rank company:", max_rank_company["company_name"], max_rank_company["ROE_PERCENT_RANK"])
+
+    if max_roe_company["company_name"] == max_rank_company["company_name"]:
+        print("✅ Verified: highest ROE matches highest ROE percentile rank")
+    else:
+        print("❌ Mismatch: check ranking logic")
+
+o/p:
+No companies found in IT Services peer group
+print(df["peer_group"].unique())
+
+<ArrowStringArray>
+[            'IT',         'Pharma',        'Banking',           'FMCG',
+         'Energy',     'Automobile',        'Telecom', 'Infrastructure',
+         'Retail',         'Metals',      'Chemicals']
+Length: 11, dtype: str
+
+it_services = df[df["peer_group"].str.contains("IT", case=False, na=False)]
+print(it_services.head())
+
+company_id company_name peer_group        ROE       ROCE  Net_Profit_Margin  \
+0      IT001        ITCo1         IT  16.864431  18.384537           6.853302   
+1      IT002        ITCo2         IT  15.428914   5.954614          13.313735   
+2      IT003        ITCo3         IT  16.435447  12.761695           9.304274   
+3      IT004        ITCo4         IT  17.626151  13.875457          12.026338   
+4      IT005        ITCo5         IT  17.013021  16.153909          10.062661   
+
+         DE         FCF  PAT_CAGR_5yr  Revenue_CAGR_5yr  EPS_CAGR_5yr  \
+0  0.210557   85.926525     16.918674          5.520054     13.742103   
+1  0.938570   67.239950      6.407859         18.644402     15.038004   
+2  0.543725  115.189394     16.608195         14.028851     18.387849   
+3  0.432407  126.854567      6.563372         10.767670     12.315006   
+4  0.987746   60.639832      8.815874         10.427796     12.087400   
+
+   Interest_Coverage  Asset_Turnover  ROE_PERCENT_RANK  
+0           9.958938        1.783544               0.6  
+1           8.463581        1.818468               0.2  
+2           4.990420        1.410634               0.4  
+3           6.870018        1.925797               1.0  
+4           1.410839        0.710036               0.8  
+
+for group, subset in df.groupby("peer_group"):
+    if subset.empty:
+        continue
+    max_roe_company = subset.loc[subset["ROE"].idxmax()]
+    max_rank_company = subset.loc[subset["ROE_PERCENT_RANK"].idxmax()]
+    if max_roe_company["company_name"] == max_rank_company["company_name"]:
+        print(f"✅ {group}: Verified")
+    else:
+        print(f"❌ {group}: Mismatch")
+o/p:
+✅Automobile: Verified
+✅ Banking: Verified
+✅ Chemicals: Verified
+✅ Energy: Verified
+✅ FMCG: Verified
+✅ IT: Verified
+✅ Infrastructure: Verified
+✅ Metals: Verified
+✅ Pharma: Verified
+✅ Retail: Verified
+✅ Telecom: Verified
+
+import pandas as pd
+
+df = pd.read_excel("peer_groups.xlsx")
+
+# Calculate ROE percentile rank within each peer group
+df["ROE_PERCENT_RANK"] = df.groupby("peer_group")["ROE"].rank(pct=True)
+
+# Loop through all peer groups and verify
+for group, subset in df.groupby("peer_group"):
+    if subset.empty:
+        continue
+    max_roe_company = subset.loc[subset["ROE"].idxmax()]
+    max_rank_company = subset.loc[subset["ROE_PERCENT_RANK"].idxmax()]
+    
+    if max_roe_company["company_name"] == max_rank_company["company_name"]:
+        print(f"✅ {group}: Verified — {max_roe_company['company_name']} has highest ROE and highest ROE rank")
+    else:
+        print(f"❌ {group}: Mismatch — {max_roe_company['company_name']} has highest ROE, "
+              f"but {max_rank_company['company_name']} has highest ROE rank")
+
+o/p:
+✅ Automobile: Verified — AutomobileCo1 has highest ROE and highest ROE rank
+✅ Banking: Verified — BankingCo2 has highest ROE and highest ROE rank
+✅ Chemicals: Verified — ChemicalsCo4 has highest ROE and highest ROE rank
+✅ Energy: Verified — EnergyCo5 has highest ROE and highest ROE rank
+✅ FMCG: Verified — FMCGCo4 has highest ROE and highest ROE rank
+✅ IT: Verified — ITCo4 has highest ROE and highest ROE rank
+✅ Infrastructure: Verified — InfrastructureCo5 has highest ROE and highest ROE rank
+✅ Metals: Verified — MetalsCo3 has highest ROE and highest ROE rank
+✅ Pharma: Verified — PharmaCo5 has highest ROE and highest ROE rank
+✅ Retail: Verified — RetailCo1 has highest ROE and highest ROE rank
+✅ Telecom: Verified — TelecomCo3 has highest ROE and highest ROE rank
+
+
+

@@ -1,0 +1,15 @@
+﻿Column,Meaning
+company_id / company_name,Unique identifier or name of the company
+ROE,Return on Equity (%)
+DE,Debt-to-Equity ratio
+FCF,Free Cash Flow (absolute or per share)
+Revenue_CAGR_5yr,5-year Revenue CAGR (%)
+PAT_CAGR_5yr,5-year Profit After Tax CAGR (%)
+PE,Price-to-Earnings ratio
+PB,Price-to-Book ratio
+Dividend_Yield,Dividend Yield (%)
+Dividend_Payout,Dividend Payout ratio (%)
+Revenue,Latest annual revenue (in Crores)
+Revenue_CAGR_3yr,3-year Revenue CAGR (%)
+FCF_Latest,Free Cash Flow in the latest year
+DE_Declining_YoY,Boolean flag (True/False) if Debt-to-Equity is declining year-over-year
