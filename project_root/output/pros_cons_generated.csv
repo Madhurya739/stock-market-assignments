@@ -1,0 +1,7 @@
+company_id,type,rule_id,text,confidence_pct
+C001,pro,pro_1,Consistently high return on equity above 20% demonstrates exceptional capital efficiency,85
+C001,pro,pro_2,Strong free cash flow generation over 5 years signals healthy business fundamentals,80
+C001,con,fallback_con,Default con: Company faces some risks,65
+C002,con,con_1,Debt-to-equity ratio of 2.5 is elevated for a non-financial company and warrants monitoring,90
+C002,con,con_2,Free cash flow negative for 3 consecutive years raises concern about cash generation quality,85
+C002,pro,fallback_pro,Default pro: Company has some strengths,65

@@ -1,0 +1,100 @@
+INFO:root:Home OK for INFY
+INFO:root:Profile OK for INFY
+INFO:root:Screener OK for INFY
+INFO:root:Peers OK for INFY
+INFO:root:Trends OK for INFY
+INFO:root:Sectors OK for INFY
+INFO:root:Capital OK for INFY
+INFO:root:Reports OK for INFY
+INFO:root:Home OK for TCS
+INFO:root:Profile OK for TCS
+INFO:root:Screener OK for TCS
+INFO:root:Peers OK for TCS
+INFO:root:Trends OK for TCS
+INFO:root:Sectors OK for TCS
+INFO:root:Capital OK for TCS
+INFO:root:Reports OK for TCS
+INFO:root:Home OK for HDFCBANK
+INFO:root:Profile OK for HDFCBANK
+INFO:root:Screener OK for HDFCBANK
+INFO:root:Peers OK for HDFCBANK
+INFO:root:Trends OK for HDFCBANK
+INFO:root:Sectors OK for HDFCBANK
+INFO:root:Capital OK for HDFCBANK
+INFO:root:Reports OK for HDFCBANK
+INFO:root:Home OK for ICICIBANK
+INFO:root:Profile OK for ICICIBANK
+INFO:root:Screener OK for ICICIBANK
+INFO:root:Peers OK for ICICIBANK
+INFO:root:Trends OK for ICICIBANK
+INFO:root:Sectors OK for ICICIBANK
+INFO:root:Capital OK for ICICIBANK
+INFO:root:Reports OK for ICICIBANK
+INFO:root:Home OK for HINDUNILVR
+INFO:root:Profile OK for HINDUNILVR
+INFO:root:Screener OK for HINDUNILVR
+INFO:root:Peers OK for HINDUNILVR
+INFO:root:Trends OK for HINDUNILVR
+INFO:root:Sectors OK for HINDUNILVR
+INFO:root:Capital OK for HINDUNILVR
+INFO:root:Reports OK for HINDUNILVR
+INFO:root:Home OK for NESTLEIND
+INFO:root:Profile OK for NESTLEIND
+INFO:root:Screener OK for NESTLEIND
+INFO:root:Peers OK for NESTLEIND
+INFO:root:Trends OK for NESTLEIND
+INFO:root:Sectors OK for NESTLEIND
+INFO:root:Capital OK for NESTLEIND
+INFO:root:Reports OK for NESTLEIND
+INFO:root:Home OK for RELIANCE
+INFO:root:Profile OK for RELIANCE
+INFO:root:Screener OK for RELIANCE
+INFO:root:Peers OK for RELIANCE
+INFO:root:Trends OK for RELIANCE
+INFO:root:Sectors OK for RELIANCE
+INFO:root:Capital OK for RELIANCE
+INFO:root:Reports OK for RELIANCE
+INFO:root:Home OK for ONGC
+INFO:root:Profile OK for ONGC
+INFO:root:Screener OK for ONGC
+INFO:root:Peers OK for ONGC
+INFO:root:Trends OK for ONGC
+INFO:root:Sectors OK for ONGC
+INFO:root:Capital OK for ONGC
+INFO:root:Reports OK for ONGC
+INFO:root:Home OK for SUNPHARMA
+INFO:root:Profile OK for SUNPHARMA
+INFO:root:Screener OK for SUNPHARMA
+INFO:root:Peers OK for SUNPHARMA
+INFO:root:Trends OK for SUNPHARMA
+INFO:root:Sectors OK for SUNPHARMA
+INFO:root:Capital OK for SUNPHARMA
+INFO:root:Reports OK for SUNPHARMA
+INFO:root:Home OK for DRREDDY
+INFO:root:Profile OK for DRREDDY
+INFO:root:Screener OK for DRREDDY
+INFO:root:Peers OK for DRREDDY
+INFO:root:Trends OK for DRREDDY
+INFO:root:Sectors OK for DRREDDY
+INFO:root:Capital OK for DRREDDY
+INFO:root:Reports OK for DRREDDY
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 771ed5e4-9d12-476c-8342-cc19f4468f64
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 3f90f712-0180-4e9f-b9ac-2230f3908a86
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 2bc63d3d-a49b-459c-8305-c3a5b5125500
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 3ffbaa4c-0e7b-430d-a891-05eb866aad35
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: f3c004f3-9ab9-46f8-9140-f69fc7a32277
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 669af22c-cf67-4eb5-a390-ef6f83ba55e2
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: eb3ea7bc-1c40-4edd-a058-913b9eb6b1aa
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 27bca443-8ed8-4479-96e4-06b4a8ab1206
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 773149e6-4238-4691-b72d-ec570c4e39d1
+ERROR:ipykernel.comm:No such comm target registered: jupyter.widget.control
+WARNING:Comm:No such comm: 013f685f-38bc-4415-92be-38739bedb871

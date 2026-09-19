@@ -1,0 +1,16 @@
+company_id,year,cfo,cfi,cff,capital_allocation_label
+C001,2018,-99900,-20380,40260,Distress Signal
+C001,2019,-99950,-20390,40280,Distress Signal
+C001,2020,-100000,-20400,40300,Distress Signal
+C001,2021,-100050,-20410,40320,Distress Signal
+C001,2022,-100100,-20420,40340,Distress Signal
+C002,2018,60240,-150,-100500,Reinvestor
+C002,2019,60270,-150,-100550,Reinvestor
+C002,2020,60300,-150,-100600,Reinvestor
+C002,2021,60330,-150,-100650,Reinvestor
+C002,2022,60360,-150,-100700,Reinvestor
+C003,2018,81220,-300,-200,Reinvestor
+C003,2019,81260,-300,-200,Reinvestor
+C003,2020,81300,-300,-200,Reinvestor
+C003,2021,81340,-300,-200,Reinvestor
+C003,2022,81380,-300,-200,Reinvestor

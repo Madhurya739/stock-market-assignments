@@ -1,0 +1,4 @@
+company_id,year,from_pattern,to_pattern
+C001,2021,Reinvestor,Debt Repayer
+C001,2022,Debt Repayer,Distress Signal
+C002,2022,Reinvestor,Capital Raiser

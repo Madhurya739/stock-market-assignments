@@ -1,0 +1,9 @@
+company_id,metric_type,period_years,value_pct
+C001,compounded_sales_growth,10,21.0
+C001,compounded_profit_growth,5,15.0
+C001,stock_price_cagr,10,18.0
+C001,roe,3,12.0
+C002,compounded_sales_growth,7,10.0
+C002,compounded_profit_growth,10,20.0
+C002,stock_price_cagr,5,8.0
+C002,roe,10,14.0
