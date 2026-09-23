@@ -1,0 +1,17 @@
+# Screener thresholds for financial ratios
+
+ROE min: 12
+D/E max: 2.0
+FCF min: 0
+Revenue CAGR 5yr min: 10
+PAT CAGR 5yr min: 8
+OPM min: 15
+P/E max: 25
+P/B max: 3.0
+Dividend Yield min: 1.0
+ICR min: 2.5
+Market Cap min: 1000
+Net Profit min: 100
+EPS CAGR min: 10
+Asset Turnover min: 1.0
+Sales min: 5000

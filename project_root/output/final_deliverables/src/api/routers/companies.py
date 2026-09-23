@@ -1,0 +1,573 @@
+# src/api/routers/companies.py
+from fastapi import APIRouter, HTTPException
+
+router = APIRouter()
+COMPANIES = [
+    {
+        "company_id": 1,
+        "company_name": "Tata Consultancy Services",
+        "ticker": "TCS",
+        "broad_sector": "IT",
+    },
+    {
+        "company_id": 2,
+        "company_name": "Infosys",
+        "ticker": "INFY",
+        "broad_sector": "IT",
+    },
+    {
+        "company_id": 3,
+        "company_name": "Reliance Industries",
+        "ticker": "RELIANCE",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 4,
+        "company_name": "HDFC Bank",
+        "ticker": "HDFCBANK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 5,
+        "company_name": "ICICI Bank",
+        "ticker": "ICICIBANK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 6,
+        "company_name": "Kotak Mahindra Bank",
+        "ticker": "KOTAKBANK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 7,
+        "company_name": "Axis Bank",
+        "ticker": "AXISBANK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 8,
+        "company_name": "State Bank of India",
+        "ticker": "SBIN",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 9,
+        "company_name": "Bharti Airtel",
+        "ticker": "BHARTIARTL",
+        "broad_sector": "Telecom",
+    },
+    {
+        "company_id": 10,
+        "company_name": "Hindustan Unilever",
+        "ticker": "HINDUNILVR",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 11,
+        "company_name": "ITC Limited",
+        "ticker": "ITC",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 12,
+        "company_name": "Larsen & Toubro",
+        "ticker": "LT",
+        "broad_sector": "Infrastructure",
+    },
+    {
+        "company_id": 13,
+        "company_name": "Insurance",
+        "ticker": "BAJFINANCE",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 14,
+        "company_name": "Bajaj Finserv",
+        "ticker": "BAJAJFINSV",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 15,
+        "company_name": "Maruti Suzuki",
+        "ticker": "MARUTI",
+        "broad_sector": "Automobile",
+    },
+    {
+        "company_id": 16,
+        "company_name": "Mahindra & Mahindra",
+        "ticker": "M&M",
+        "broad_sector": "Automobile",
+    },
+    {
+        "company_id": 17,
+        "company_name": "Tata Motors",
+        "ticker": "TATAMOTORS",
+        "broad_sector": "Automobile",
+    },
+    {
+        "company_id": 18,
+        "company_name": "UltraTech Cement",
+        "ticker": "ULTRACEMCO",
+        "broad_sector": "Cement",
+    },
+    {
+        "company_id": 19,
+        "company_name": "Asian Paints",
+        "ticker": "ASIANPAINT",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 20,
+        "company_name": "Media",
+        "ticker": "NESTLEIND",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 21,
+        "company_name": "Sun Pharma",
+        "ticker": "SUNPHARMA",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 22,
+        "company_name": "Health Care",
+        "ticker": "DRREDDY",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 23,
+        "company_name": "Cipla",
+        "ticker": "CIPLA",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 24,
+        "company_name": "Divi's Laboratories",
+        "ticker": "DIVISLAB",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 25,
+        "company_name": "NTPC Limited",
+        "ticker": "NTPC",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 26,
+        "company_name": "Power Grid Corporation",
+        "ticker": "POWERGRID",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 27,
+        "company_name": "Adani Enterprises",
+        "ticker": "ADANIENT",
+        "broad_sector": "Infrastructure",
+    },
+    {
+        "company_id": 28,
+        "company_name": "Adani Ports",
+        "ticker": "ADANIPORTS",
+        "broad_sector": "Infrastructure",
+    },
+    {
+        "company_id": 29,
+        "company_name": "Adani Green Energy",
+        "ticker": "ADANIGREEN",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 30,
+        "company_name": "Adani Transmission",
+        "ticker": "ADANITRANS",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 31,
+        "company_name": "Grasim Industries",
+        "ticker": "GRASIM",
+        "broad_sector": "Infrastructure",
+    },
+    {
+        "company_id": 32,
+        "company_name": "HCL Technologies",
+        "ticker": "HCLTECH",
+        "broad_sector": "IT",
+    },
+    {
+        "company_id": 33,
+        "company_name": "Tech Mahindra",
+        "ticker": "TECHM",
+        "broad_sector": "IT",
+    },
+    {
+        "company_id": 34,
+        "company_name": "Wipro",
+        "ticker": "WIPRO",
+        "broad_sector": "IT",
+    },
+    {
+        "company_id": 35,
+        "company_name": "Britannia Industries",
+        "ticker": "BRITANNIA",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 36,
+        "company_name": "Hero MotoCorp",
+        "ticker": "HEROMOTOCO",
+        "broad_sector": "Automobile",
+    },
+    {
+        "company_id": 37,
+        "company_name": "Eicher Motors",
+        "ticker": "EICHERMOT",
+        "broad_sector": "Automobile",
+    },
+    {
+        "company_id": 38,
+        "company_name": "Hindalco Industries",
+        "ticker": "HINDALCO",
+        "broad_sector": "Metals",
+    },
+    {
+        "company_id": 39,
+        "company_name": "JSW Steel",
+        "ticker": "JSWSTEEL",
+        "broad_sector": "Metals",
+    },
+    {
+        "company_id": 40,
+        "company_name": "Tata Steel",
+        "ticker": "TATASTEEL",
+        "broad_sector": "Metals",
+    },
+    {
+        "company_id": 41,
+        "company_name": "Coal India",
+        "ticker": "COALINDIA",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 42,
+        "company_name": "Oil & Natural Gas Corp",
+        "ticker": "ONGC",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 43,
+        "company_name": "Indian Oil Corporation",
+        "ticker": "IOC",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 44,
+        "company_name": "Bharat Petroleum",
+        "ticker": "BPCL",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 45,
+        "company_name": "Hindustan Petroleum",
+        "ticker": "HPCL",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 46,
+        "company_name": "GAIL India",
+        "ticker": "GAIL",
+        "broad_sector": "Energy",
+    },
+    {
+        "company_id": 47,
+        "company_name": "IndusInd Bank",
+        "ticker": "INDUSINDBK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 48,
+        "company_name": "Bandhan Bank",
+        "ticker": "BANDHANBNK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 49,
+        "company_name": "Punjab National Bank",
+        "ticker": "PNB",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 50,
+        "company_name": "Bank of Baroda",
+        "ticker": "BANKBARODA",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 51,
+        "company_name": "IDFC First Bank",
+        "ticker": "IDFCFIRSTB",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 52,
+        "company_name": "Zee Entertainment",
+        "ticker": "ZEEL",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 53,
+        "company_name": "DLF Limited",
+        "ticker": "DLF",
+        "broad_sector": "Real Estate",
+    },
+    {
+        "company_id": 54,
+        "company_name": "Godrej Consumer Products",
+        "ticker": "GODREJCP",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 55,
+        "company_name": "Pidilite Industries",
+        "ticker": "PIDILITIND",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 56,
+        "company_name": "Shree Cement",
+        "ticker": "SHREECEM",
+        "broad_sector": "Cement",
+    },
+    {
+        "company_id": 57,
+        "company_name": "Ambuja Cements",
+        "ticker": "AMBUJACEM",
+        "broad_sector": "Cement",
+    },
+    {
+        "company_id": 58,
+        "company_name": "Cognizant",
+        "ticker": "TORNTPHARM",
+        "broad_sector": "IT",
+    },
+    {
+        "company_id": 59,
+        "company_name": "Capgemini",
+        "ticker": "MCDOWELL-N",
+        "broad_sector": "IT",
+    },
+    {
+        "company_id": 60,
+        "company_name": "Muthoot Finance",
+        "ticker": "MUTHOOTFIN",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 61,
+        "company_name": "Cholamandalam Investment",
+        "ticker": "CHOLAFIN",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 62,
+        "company_name": "SBI Life Insurance",
+        "ticker": "SBILIFE",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 63,
+        "company_name": "HDFC Life Insurance",
+        "ticker": "HDFCLIFE",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 64,
+        "company_name": "ICICI Prudential Life Insurance",
+        "ticker": "ICICIPRULI",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 65,
+        "company_name": "Max Financial Services",
+        "ticker": "MFSL",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 66,
+        "company_name": "Apollo Hospitals",
+        "ticker": "APOLLOHOSP",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 67,
+        "company_name": "Fortis Healthcare",
+        "ticker": "FORTIS",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 68,
+        "company_name": "Biocon",
+        "ticker": "BIOCON",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 69,
+        "company_name": "Lupin",
+        "ticker": "LUPIN",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 70,
+        "company_name": "Aurobindo Pharma",
+        "ticker": "AUROPHARMA",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 71,
+        "company_name": "Torrent Pharmaceuticals",
+        "ticker": "TORNTPHARM",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 72,
+        "company_name": "Cadila Healthcare",
+        "ticker": "ZYDUSLIFE",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 73,
+        "company_name": "Glenmark Pharma",
+        "ticker": "GLENMARK",
+        "broad_sector": "Pharma",
+    },
+    {
+        "company_id": 74,
+        "company_name": "United Breweries",
+        "ticker": "UBL",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 75,
+        "company_name": "United Spirits",
+        "ticker": "MCDOWELL-N",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 76,
+        "company_name": "Colgate Palmolive",
+        "ticker": "COLPAL",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 77,
+        "company_name": "Dabur India",
+        "ticker": "DABUR",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 78,
+        "company_name": "Emami",
+        "ticker": "EMAMILTD",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 79,
+        "company_name": "Marico",
+        "ticker": "MARICO",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 80,
+        "company_name": "Berger Paints",
+        "ticker": "BERGEPAINT",
+        "broad_sector": "Consumer",
+    },
+    {
+        "company_id": 81,
+        "company_name": "Godrej Properties",
+        "ticker": "GODREJPROP",
+        "broad_sector": "Real Estate",
+    },
+    {
+        "company_id": 82,
+        "company_name": "Oberoi Realty",
+        "ticker": "OBEROIRLTY",
+        "broad_sector": "Real Estate",
+    },
+    {
+        "company_id": 83,
+        "company_name": "Phoenix Mills",
+        "ticker": "PHOENIXLTD",
+        "broad_sector": "Real Estate",
+    },
+    {
+        "company_id": 84,
+        "company_name": "Indiabulls Real Estate",
+        "ticker": "IBREALEST",
+        "broad_sector": "Real Estate",
+    },
+    {
+        "company_id": 85,
+        "company_name": "DLF Limited",
+        "ticker": "DLF",
+        "broad_sector": "Real Estate",
+    },
+    {
+        "company_id": 86,
+        "company_name": "Aditya Birla Capital",
+        "ticker": "ABCAPITAL",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 87,
+        "company_name": "Shriram Transport Finance",
+        "ticker": "SRTRANSFIN",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 88,
+        "company_name": "LIC Housing Finance",
+        "ticker": "LICHSGFIN",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 89,
+        "company_name": "Canara Bank",
+        "ticker": "CANBK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 90,
+        "company_name": "Union Bank of India",
+        "ticker": "UNIONBANK",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 91,
+        "company_name": "Bank of India",
+        "ticker": "BANKINDIA",
+        "broad_sector": "Financials",
+    },
+    {
+        "company_id": 92,
+        "company_name": "Central Bank of India",
+        "ticker": "CBI",
+        "broad_sector": "Financials",
+    },
+]
+
+
+@router.get("/companies")
+def list_companies():
+    """Return all companies with count."""
+    return {"count": len(COMPANIES), "companies": COMPANIES}
+
+
+@router.get("/companies/{ticker}")
+def get_company(ticker: str):
+    """Return company details for a given ticker."""
+    for company in COMPANIES:
+        if company["ticker"].upper() == ticker.upper():
+            return company
+    raise HTTPException(status_code=404, detail="Company not found")

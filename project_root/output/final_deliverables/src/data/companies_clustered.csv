@@ -1,0 +1,93 @@
+company,sector,return_on_equity_pct,debt_to_equity,revenue_cagr_5yr,fcf_cagr_5yr,operating_profit_margin_pct,cluster,archetype
+Company_1,Technology,15.0,0.5,10.0,6.5,17.0,4,Cash Rich
+Company_2,Finance,11.0,0.6,6.0,4.0,13.0,4,Cash Rich
+Company_3,Healthcare,12.0,0.7,7.0,5.0,14.0,4,Cash Rich
+Company_4,Energy,13.0,0.8,8.0,6.0,15.0,4,Cash Rich
+Company_5,Consumer,14.0,0.9,9.0,7.0,16.0,1,Stable Performers
+Company_6,Technology,15.0,0.5,10.0,8.0,17.0,2,Undervalued
+Company_7,Finance,16.0,0.6,11.0,9.0,20.5,2,Undervalued
+Company_8,Healthcare,17.0,0.7,12.0,6.0,19.0,1,Stable Performers
+Company_9,Energy,18.0,0.8,8.0,3.0,20.0,1,Stable Performers
+Company_10,Consumer,19.0,0.9,14.0,4.0,21.0,3,Risky Bets
+Company_11,Technology,15.0,0.5,5.0,5.0,22.0,4,Cash Rich
+Company_12,Finance,21.0,0.6,6.0,6.0,23.0,1,Stable Performers
+Company_13,Healthcare,22.0,0.7,7.0,7.0,19.0,1,Stable Performers
+Company_14,Energy,23.0,0.8,8.0,8.0,25.0,1,Stable Performers
+Company_15,Consumer,24.0,0.9,9.0,6.0,26.0,1,Stable Performers
+Company_16,Technology,10.0,0.5,10.0,10.0,27.0,2,Undervalued
+Company_17,Finance,11.0,0.6,6.0,3.0,28.0,0,High Growth
+Company_18,Healthcare,12.0,0.7,12.0,4.0,29.0,0,High Growth
+Company_19,Energy,13.0,0.8,13.0,5.0,20.0,0,High Growth
+Company_20,Consumer,14.0,0.9,14.0,6.0,31.0,3,Risky Bets
+Company_21,Technology,15.0,0.5,5.0,7.0,12.0,4,Cash Rich
+Company_22,Finance,16.0,0.6,6.0,6.5,13.0,4,Cash Rich
+Company_23,Healthcare,17.0,0.7,7.0,9.0,14.0,2,Undervalued
+Company_24,Energy,18.0,0.8,8.0,10.0,15.0,2,Undervalued
+Company_25,Consumer,19.0,0.9,14.0,3.0,21.0,3,Risky Bets
+Company_26,Technology,20.0,0.5,10.0,4.0,17.0,4,Cash Rich
+Company_27,Finance,21.0,0.6,11.0,5.0,18.0,1,Stable Performers
+Company_28,Healthcare,22.0,0.7,12.0,6.0,19.0,1,Stable Performers
+Company_29,Energy,23.0,0.8,13.0,6.0,20.0,3,Risky Bets
+Company_30,Consumer,24.0,0.9,14.0,8.0,21.0,3,Risky Bets
+Company_31,Technology,15.0,0.5,5.0,9.0,17.0,2,Undervalued
+Company_32,Finance,11.0,0.6,6.0,10.0,23.0,2,Undervalued
+Company_33,Healthcare,12.0,0.7,12.0,3.0,24.0,0,High Growth
+Company_34,Energy,13.0,0.8,8.0,4.0,25.0,0,High Growth
+Company_35,Consumer,14.0,0.9,9.0,5.0,26.0,0,High Growth
+Company_36,Technology,15.0,0.5,10.0,6.5,27.0,0,High Growth
+Company_37,Finance,16.0,0.6,11.0,7.0,20.5,2,Undervalued
+Company_38,Healthcare,17.0,0.7,12.0,8.0,29.0,3,Risky Bets
+Company_39,Energy,18.0,0.8,13.0,9.0,30.0,3,Risky Bets
+Company_40,Consumer,19.0,0.9,14.0,10.0,31.0,3,Risky Bets
+Company_41,Technology,15.0,0.5,10.0,3.0,12.0,4,Cash Rich
+Company_42,Finance,21.0,0.6,6.0,4.0,13.0,4,Cash Rich
+Company_43,Healthcare,22.0,0.7,7.0,6.0,19.0,1,Stable Performers
+Company_44,Energy,23.0,0.8,8.0,6.0,15.0,1,Stable Performers
+Company_45,Consumer,24.0,0.9,9.0,7.0,16.0,1,Stable Performers
+Company_46,Technology,10.0,0.5,10.0,8.0,17.0,2,Undervalued
+Company_47,Finance,11.0,0.6,11.0,9.0,18.0,2,Undervalued
+Company_48,Healthcare,12.0,0.7,12.0,10.0,19.0,2,Undervalued
+Company_49,Energy,13.0,0.8,8.0,3.0,20.0,0,High Growth
+Company_50,Consumer,14.0,0.9,14.0,6.0,21.0,3,Risky Bets
+Company_51,Technology,15.0,0.5,5.0,5.0,22.0,4,Cash Rich
+Company_52,Finance,16.0,0.6,6.0,6.0,23.0,4,Cash Rich
+Company_53,Healthcare,17.0,0.7,7.0,7.0,24.0,1,Stable Performers
+Company_54,Energy,18.0,0.8,8.0,8.0,25.0,1,Stable Performers
+Company_55,Consumer,19.0,0.9,9.0,9.0,21.0,1,Stable Performers
+Company_56,Technology,20.0,0.5,10.0,10.0,27.0,2,Undervalued
+Company_57,Finance,21.0,0.6,6.0,6.5,28.0,1,Stable Performers
+Company_58,Healthcare,22.0,0.7,12.0,4.0,29.0,3,Risky Bets
+Company_59,Energy,23.0,0.8,13.0,5.0,30.0,3,Risky Bets
+Company_60,Consumer,24.0,0.9,14.0,6.0,31.0,3,Risky Bets
+Company_61,Technology,15.0,0.5,5.0,7.0,17.0,4,Cash Rich
+Company_62,Finance,11.0,0.6,6.0,8.0,13.0,4,Cash Rich
+Company_63,Healthcare,12.0,0.7,7.0,9.0,14.0,2,Undervalued
+Company_64,Energy,13.0,0.8,8.0,6.0,15.0,4,Cash Rich
+Company_65,Consumer,14.0,0.9,14.0,3.0,16.0,0,High Growth
+Company_66,Technology,15.0,0.5,10.0,4.0,17.0,4,Cash Rich
+Company_67,Finance,16.0,0.6,11.0,5.0,20.5,0,High Growth
+Company_68,Healthcare,17.0,0.7,12.0,6.0,19.0,1,Stable Performers
+Company_69,Energy,18.0,0.8,13.0,7.0,20.0,3,Risky Bets
+Company_70,Consumer,19.0,0.9,14.0,8.0,21.0,3,Risky Bets
+Company_71,Technology,15.0,0.5,5.0,6.5,22.0,4,Cash Rich
+Company_72,Finance,21.0,0.6,6.0,10.0,23.0,2,Undervalued
+Company_73,Healthcare,22.0,0.7,12.0,3.0,19.0,1,Stable Performers
+Company_74,Energy,23.0,0.8,8.0,4.0,25.0,1,Stable Performers
+Company_75,Consumer,24.0,0.9,9.0,5.0,26.0,1,Stable Performers
+Company_76,Technology,10.0,0.5,10.0,6.0,27.0,0,High Growth
+Company_77,Finance,11.0,0.6,11.0,7.0,28.0,0,High Growth
+Company_78,Healthcare,12.0,0.7,12.0,6.0,29.0,0,High Growth
+Company_79,Energy,13.0,0.8,13.0,9.0,20.0,2,Undervalued
+Company_80,Consumer,14.0,0.9,14.0,10.0,31.0,3,Risky Bets
+Company_81,Technology,15.0,0.5,10.0,3.0,12.0,4,Cash Rich
+Company_82,Finance,16.0,0.6,6.0,4.0,13.0,4,Cash Rich
+Company_83,Healthcare,17.0,0.7,7.0,5.0,14.0,4,Cash Rich
+Company_84,Energy,18.0,0.8,8.0,6.0,15.0,1,Stable Performers
+Company_85,Consumer,19.0,0.9,9.0,6.0,21.0,1,Stable Performers
+Company_86,Technology,20.0,0.5,10.0,8.0,17.0,2,Undervalued
+Company_87,Finance,21.0,0.6,11.0,9.0,18.0,2,Undervalued
+Company_88,Healthcare,22.0,0.7,12.0,10.0,19.0,2,Undervalued
+Company_89,Energy,23.0,0.8,8.0,3.0,20.0,1,Stable Performers
+Company_90,Consumer,24.0,0.9,14.0,4.0,21.0,3,Risky Bets
+Company_91,Technology,15.0,0.5,5.0,5.0,17.0,4,Cash Rich
+Company_92,Finance,11.0,0.6,6.0,6.5,23.0,4,Cash Rich

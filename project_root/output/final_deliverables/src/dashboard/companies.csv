@@ -1,0 +1,20 @@
+import streamlit as st
+import pandas as pd
+
+# Load dataset
+data = pd.read_csv("companies.csv")
+
+if "selected_company_id" in st.session_state:
+    company_id = st.session_state["selected_company_id"]
+    sector = st.session_state["selected_sector"]
+
+    # Get peers in same sector
+    peers = data[data["sector"] == sector]
+
+    st.write(f"Peer Comparison for Company ID {company_id} in {sector} sector")
+    st.dataframe(peers[[
+        "company_id", "name", "ROE", "ROCE", "Net_Profit_Margin",
+        "DE", "Revenue_CAGR", "FCF"
+    ]])
+else:
+    st.warning("No company selected from Screener screen.")
